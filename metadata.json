@@ -1,0 +1,8 @@
+{
+  "name": "NovelFlow - Cào & Dịch Truyện AI, Xuất EPUB & API",
+  "description": "Nền tảng cào truyện đa nguồn có hỗ trợ Cookie VIP, dịch thuật tiểu thuyết bằng AI Gemini, xuất sách định dạng EPUB chuẩn và cung cấp REST API / OPDS tích hợp cho các ứng dụng đọc truyện.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
