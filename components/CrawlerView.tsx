@@ -188,6 +188,59 @@ export default function CrawlerView({
     const chaptersAccumulated: Chapter[] = [];
     const novelId = resumeNovel ? resumeNovel.id : `novel-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
+    // 1. Khởi tạo & Lưu hồ sơ truyện vào Supabase / Server storage trước khi bắt đầu cào các chương
+    const domain = new URL(url).hostname;
+    let origLang: Novel['originalLanguage'] = 'zh';
+    if (domain.includes('syosetu') || domain.includes('kakuyomu')) origLang = 'ja';
+    else if (domain.includes('novelfull')) origLang = 'en';
+
+    let currentNovel: Novel = resumeNovel ? {
+      ...resumeNovel,
+      cookieConfig,
+      updatedAt: new Date().toISOString(),
+    } : {
+      id: novelId,
+      title: inspectedNovel.title,
+      author: inspectedNovel.author,
+      description: inspectedNovel.description,
+      coverUrl: inspectedNovel.coverUrl,
+      sourceUrl: url,
+      sourceDomain: domain,
+      originalLanguage: origLang,
+      targetLanguage: 'vi',
+      status: 'ongoing',
+      chaptersCount: 0,
+      translatedChaptersCount: 0,
+      cookieConfig,
+      crawlerConfig: preset.config,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      if (resumeNovel) {
+        await fetch(`/api/novels/${resumeNovel.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(currentNovel),
+        });
+      } else {
+        await fetch('/api/novels', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(currentNovel),
+        });
+      }
+      onNovelCrawled(currentNovel, []);
+      setCrawlLogs(prev => [
+        { text: `⚡ Đã khởi tạo hồ sơ truyện trên Supabase & Thư viện. Bắt đầu cào và import từng chương...`, type: 'info' },
+        ...prev,
+      ]);
+    } catch (initErr) {
+      console.warn('Lỗi khởi tạo novel:', initErr);
+    }
+
+    // 2. Vòng lặp cào từng chương & import ngay lập tức vào Supabase
     for (let i = 0; i < targetChapters.length; i++) {
       const item = targetChapters[i];
       const displayTitle = formatChapterDisplayTitle(item.number, item.title);
@@ -229,14 +282,43 @@ export default function CrawlerView({
         };
 
         chaptersAccumulated.push(newChapter);
-        // Automatically keep chapters sorted by chapter number in state
+        // Tự động sắp xếp các chương đã cào theo đúng thứ tự tăng dần
         chaptersAccumulated.sort((a, b) => a.chapterNumber - b.chapterNumber);
         setCrawledChapters([...chaptersAccumulated]);
 
-        setCrawlLogs(prev => [
-          { text: `✓ Hoàn tất Chương ${item.number} (${data.data.wordCount} chữ) - Đã xóa nguồn/watermark`, type: 'success' },
-          ...prev.slice(0, 50),
-        ]);
+        // >>> IMPORT NGAY CHƯƠNG VỪA CÀO VÀO SUPABASE & SERVER STORAGE <<<
+        try {
+          const saveChapterRes = await fetch(`/api/novels/${novelId}/chapters`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify([newChapter]),
+          });
+
+          if (saveChapterRes.ok) {
+            currentNovel = {
+              ...currentNovel,
+              chaptersCount: Math.max(currentNovel.chaptersCount || 0, chaptersAccumulated.length),
+              updatedAt: new Date().toISOString(),
+            };
+            onNovelCrawled(currentNovel, chaptersAccumulated);
+
+            setCrawlLogs(prev => [
+              { text: `⚡ Đã cào & import ngay Chương ${item.number} vào Supabase (${data.data.wordCount} chữ)`, type: 'success' },
+              ...prev.slice(0, 50),
+            ]);
+          } else {
+            setCrawlLogs(prev => [
+              { text: `✓ Hoàn tất Chương ${item.number} (${data.data.wordCount} chữ)`, type: 'success' },
+              ...prev.slice(0, 50),
+            ]);
+          }
+        } catch (saveErr) {
+          console.warn(`Lỗi lưu chương ${item.number} lên Supabase:`, saveErr);
+          setCrawlLogs(prev => [
+            { text: `✓ Đã cào Chương ${item.number} (${data.data.wordCount} chữ)`, type: 'success' },
+            ...prev.slice(0, 50),
+          ]);
+        }
       } catch (err: unknown) {
         const errorText = err instanceof Error ? err.message : String(err);
         setCrawlLogs(prev => [
@@ -253,91 +335,37 @@ export default function CrawlerView({
       }
     }
 
-    // Automatically sort all crawled chapters strictly by chapterNumber ascending
+    // 3. Sau khi kết thúc, sắp xếp toàn bộ chương và cập nhật trạng thái hoàn tất
     chaptersAccumulated.sort((a, b) => a.chapterNumber - b.chapterNumber);
+    const highestChapterNumber = Math.max(
+      currentNovel.chaptersCount || 0,
+      ...chaptersAccumulated.map(c => c.chapterNumber)
+    );
+
+    const finalizedNovel: Novel = {
+      ...currentNovel,
+      chaptersCount: highestChapterNumber,
+      cookieConfig,
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      await fetch(`/api/novels/${novelId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(finalizedNovel),
+      });
+    } catch {
+      // Non-fatal
+    }
+
+    setCrawledNovelResult(finalizedNovel);
+    onNovelCrawled(finalizedNovel, chaptersAccumulated);
+
     setCrawlLogs(prev => [
-      { text: `⚡ Tự động sắp xếp hoàn chỉnh ${chaptersAccumulated.length} chương theo đúng thứ tự & lưu vào cơ sở dữ liệu`, type: 'success' },
+      { text: `🎉 Hoàn tất: Đã cào và import trực tiếp toàn bộ ${chaptersAccumulated.length} chương vào Supabase!`, type: 'success' },
       ...prev.slice(0, 50),
     ]);
-
-    // Save Novel & Chapters to Library (and Firebase)
-    const domain = new URL(url).hostname;
-    let origLang: Novel['originalLanguage'] = 'zh';
-    if (domain.includes('syosetu') || domain.includes('kakuyomu')) origLang = 'ja';
-    else if (domain.includes('novelfull')) origLang = 'en';
-
-    if (resumeNovel) {
-      const highestChapterNumber = Math.max(
-        resumeNovel.chaptersCount || 0,
-        ...chaptersAccumulated.map(c => c.chapterNumber)
-      );
-
-      const updatedNovel: Novel = {
-        ...resumeNovel,
-        chaptersCount: highestChapterNumber,
-        cookieConfig,
-        updatedAt: new Date().toISOString(),
-      };
-
-      try {
-        await fetch(`/api/novels/${resumeNovel.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(updatedNovel),
-        });
-
-        await fetch(`/api/novels/${resumeNovel.id}/chapters`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(chaptersAccumulated),
-        });
-
-        setCrawledNovelResult(updatedNovel);
-        onNovelCrawled(updatedNovel, chaptersAccumulated);
-      } catch {
-        // Non-fatal
-      }
-    } else {
-      const finalNovel: Novel = {
-        id: novelId,
-        title: inspectedNovel.title,
-        author: inspectedNovel.author,
-        description: inspectedNovel.description,
-        coverUrl: inspectedNovel.coverUrl,
-        sourceUrl: url,
-        sourceDomain: domain,
-        originalLanguage: origLang,
-        targetLanguage: 'vi',
-        status: 'ongoing',
-        chaptersCount: chaptersAccumulated.length,
-        translatedChaptersCount: 0,
-        cookieConfig,
-        crawlerConfig: preset.config,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-
-      try {
-        // Save novel
-        await fetch('/api/novels', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(finalNovel),
-        });
-
-        // Save chapters
-        await fetch(`/api/novels/${novelId}/chapters`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(chaptersAccumulated),
-        });
-
-        setCrawledNovelResult(finalNovel);
-        onNovelCrawled(finalNovel, chaptersAccumulated);
-      } catch {
-        // Non-fatal
-      }
-    }
 
     setIsCrawling(false);
   };

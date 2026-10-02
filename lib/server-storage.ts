@@ -692,6 +692,9 @@ class ServerStorage {
       this.state.novels[cleanChap.novelId].chaptersCount = list.length;
       this.state.novels[cleanChap.novelId].translatedChaptersCount = list.filter(c => c.translationStatus === 'translated').length;
       this.state.novels[cleanChap.novelId].updatedAt = new Date().toISOString();
+      if (isSupabaseConfigured()) {
+        saveSupabaseNovel(this.state.novels[cleanChap.novelId]).catch(() => {});
+      }
     }
 
     this.saveState();
