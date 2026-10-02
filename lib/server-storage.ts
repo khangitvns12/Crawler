@@ -4,7 +4,6 @@ import { Novel, Chapter } from '@/types/novel';
 import { db } from './firebase';
 import { collection, doc, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
 import { cleanChapterTitle, sanitizeChapter, sanitizeChapters } from './chapter-utils';
-import { realtimeHub } from './realtime-hub';
 import { 
   isSupabaseConfigured, 
   fetchSupabaseNovels, 
@@ -333,6 +332,111 @@ class ServerStorage {
     }
   }
 
+  /**
+   * Two-way automatic synchronization with Supabase:
+   * 1. If Supabase has novels, syncs them to local storage (and prunes remote deletions)
+   * 2. If Supabase is empty but local storage has novels, auto-seeds Supabase
+   */
+  public async syncWithSupabase(): Promise<{
+    success: boolean;
+    configured: boolean;
+    message: string;
+    syncedNovelsCount: number;
+    syncedChaptersCount: number;
+  }> {
+    if (!isSupabaseConfigured()) {
+      return {
+        success: false,
+        configured: false,
+        message: 'Chưa cấu hình SUPABASE_URL hoặc SUPABASE_ANON_KEY',
+        syncedNovelsCount: 0,
+        syncedChaptersCount: 0,
+      };
+    }
+
+    try {
+      const remoteNovels = await fetchSupabaseNovels();
+
+      if (remoteNovels.length > 0) {
+        const remoteIds = new Set(remoteNovels.map(n => n.id));
+
+        // 1. Update or insert all novels from Supabase
+        for (const remoteNovel of remoteNovels) {
+          const current = this.state.novels[remoteNovel.id] || {};
+          this.state.novels[remoteNovel.id] = {
+            ...current,
+            ...remoteNovel,
+          };
+
+          // Fetch chapters if not yet cached locally
+          if (!this.state.chapters[remoteNovel.id] || this.state.chapters[remoteNovel.id].length === 0) {
+            try {
+              const remoteChaps = await fetchSupabaseChapters(remoteNovel.id);
+              if (remoteChaps && remoteChaps.length > 0) {
+                this.state.chapters[remoteNovel.id] = sanitizeChapters(remoteChaps);
+              }
+            } catch {
+              // Non-fatal
+            }
+          }
+        }
+
+        // 2. Prune local novels that have been deleted in Supabase (remote is authoritative)
+        Object.keys(this.state.novels).forEach(localId => {
+          if (!remoteIds.has(localId)) {
+            delete this.state.novels[localId];
+            delete this.state.chapters[localId];
+          }
+        });
+
+        this.saveState();
+        return {
+          success: true,
+          configured: true,
+          message: `Đã đồng bộ ${remoteNovels.length} truyện từ cơ sở dữ liệu Supabase`,
+          syncedNovelsCount: remoteNovels.length,
+          syncedChaptersCount: Object.values(this.state.chapters).reduce((acc, c) => acc + c.length, 0),
+        };
+      } else {
+        // Supabase is empty (0 novels) - upload local library to Supabase
+        const localNovels = Object.values(this.state.novels);
+        let uploadedNovels = 0;
+        let uploadedChapters = 0;
+
+        for (const novel of localNovels) {
+          const ok = await saveSupabaseNovel(novel);
+          if (ok) uploadedNovels++;
+
+          const chaps = this.state.chapters[novel.id] || [];
+          if (chaps.length > 0) {
+            const chOk = await saveSupabaseChapters(chaps);
+            if (chOk) uploadedChapters += chaps.length;
+          }
+        }
+
+        return {
+          success: true,
+          configured: true,
+          message: uploadedNovels > 0
+            ? `Đã tải lên ${uploadedNovels} truyện đồng bộ sang cơ sở dữ liệu Supabase`
+            : 'Cơ sở dữ liệu Supabase đã kết nối và sẵn sàng',
+          syncedNovelsCount: uploadedNovels,
+          syncedChaptersCount: uploadedChapters,
+        };
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('Sync with Supabase note:', msg);
+      return {
+        success: false,
+        configured: true,
+        message: `Lỗi đồng bộ Supabase: ${msg}`,
+        syncedNovelsCount: 0,
+        syncedChaptersCount: 0,
+      };
+    }
+  }
+
   public async hydrateFromFirestore(): Promise<void> {
     if (this.isHydrating) return;
     this.isHydrating = true;
@@ -421,7 +525,6 @@ class ServerStorage {
   }
 
   public saveNovel(novel: Novel): Novel {
-    const isNew = !this.state.novels[novel.id];
     const existing = this.state.novels[novel.id];
     const updated: Novel = {
       ...existing,
@@ -430,13 +533,6 @@ class ServerStorage {
     };
     this.state.novels[novel.id] = updated;
     this.saveState();
-
-    // Broadcast real-time event immediately
-    if (isNew) {
-      realtimeHub.notifyNovelCreated(updated);
-    } else {
-      realtimeHub.notifyNovelUpdated(updated);
-    }
 
     // Persist to Supabase if configured, otherwise fallback to Firebase Firestore
     if (isSupabaseConfigured()) {
@@ -459,46 +555,46 @@ class ServerStorage {
   }
 
   public deleteNovel(id: string): boolean {
-    if (this.state.novels[id]) {
-      delete this.state.novels[id];
-      delete this.state.chapters[id];
-      this.saveState();
+    const existedLocally = Boolean(this.state.novels[id]);
+    delete this.state.novels[id];
+    delete this.state.chapters[id];
+    this.saveState();
 
-      // Broadcast delete real-time event immediately
-      realtimeHub.notifyNovelDeleted(id);
-
-      if (isSupabaseConfigured()) {
-        deleteSupabaseNovel(id).catch(e => console.warn('Supabase deleteNovel warning:', e));
-      } else {
-        const safeId = sanitizeFirestoreId(id);
-        deleteDoc(doc(db, 'novels', safeId)).catch(e => {
-          console.warn('Firestore deleteDoc novel warning:', e);
-        });
-      }
-      return true;
+    if (isSupabaseConfigured()) {
+      deleteSupabaseNovel(id).catch(e => console.warn('Supabase deleteNovel warning:', e));
+    } else {
+      const safeId = sanitizeFirestoreId(id);
+      deleteDoc(doc(db, 'novels', safeId)).catch(e => {
+        console.warn('Firestore deleteDoc novel warning:', e);
+      });
     }
-    return false;
+    return true;
   }
 
   public async deleteNovelAsync(id: string): Promise<boolean> {
-    const ok = this.deleteNovel(id);
-    if (ok) {
-      if (isSupabaseConfigured()) {
-        try {
-          await deleteSupabaseNovel(id);
-        } catch (e) {
-          console.warn('Supabase deleteNovelAsync error:', e);
-        }
-      } else {
-        try {
-          const safeId = sanitizeFirestoreId(id);
-          await deleteDoc(doc(db, 'novels', safeId));
-        } catch (e) {
-          console.warn('Firestore deleteDoc async error:', e);
-        }
+    const existedLocally = Boolean(this.state.novels[id]);
+    delete this.state.novels[id];
+    delete this.state.chapters[id];
+    this.saveState();
+
+    let remoteOk = false;
+    if (isSupabaseConfigured()) {
+      try {
+        remoteOk = await deleteSupabaseNovel(id);
+      } catch (e) {
+        console.warn('Supabase deleteNovelAsync error:', e);
+      }
+    } else {
+      try {
+        const safeId = sanitizeFirestoreId(id);
+        await deleteDoc(doc(db, 'novels', safeId));
+        remoteOk = true;
+      } catch (e) {
+        console.warn('Firestore deleteDoc async error:', e);
       }
     }
-    return ok;
+
+    return existedLocally || remoteOk;
   }
 
   public getChapters(novelId: string): Chapter[] {
@@ -588,6 +684,9 @@ class ServerStorage {
       list.push(cleanChap);
     }
 
+    // Always keep chapters strictly sorted by chapterNumber ascending
+    list.sort((a, b) => a.chapterNumber - b.chapterNumber);
+
     // Update novel chapter counts
     if (this.state.novels[cleanChap.novelId]) {
       this.state.novels[cleanChap.novelId].chaptersCount = list.length;
@@ -596,12 +695,6 @@ class ServerStorage {
     }
 
     this.saveState();
-
-    // Broadcast real-time chapter update and novel progress
-    realtimeHub.notifyChapterUpdated(cleanChap);
-    if (this.state.novels[cleanChap.novelId]) {
-      realtimeHub.notifyNovelUpdated(this.state.novels[cleanChap.novelId]);
-    }
 
     // Persist to Supabase if configured, otherwise Firestore
     if (isSupabaseConfigured()) {
@@ -628,14 +721,6 @@ class ServerStorage {
     for (const ch of cleanList) {
       this.saveChapter(ch);
     }
-    if (cleanList.length > 0) {
-      const novelId = cleanList[0].novelId;
-      const maxChapNum = Math.max(...cleanList.map(c => c.chapterNumber));
-      realtimeHub.notifyChaptersAdded(novelId, cleanList.length, maxChapNum);
-      if (this.state.novels[novelId]) {
-        realtimeHub.notifyNovelUpdated(this.state.novels[novelId]);
-      }
-    }
     if (isSupabaseConfigured()) {
       saveSupabaseChapters(cleanList).catch(e => console.warn('Supabase saveChapters warning:', e));
     }
@@ -645,14 +730,6 @@ class ServerStorage {
     const cleanList = sanitizeChapters(chapters);
     for (const ch of cleanList) {
       this.saveChapter(ch);
-    }
-    if (cleanList.length > 0) {
-      const novelId = cleanList[0].novelId;
-      const maxChapNum = Math.max(...cleanList.map(c => c.chapterNumber));
-      realtimeHub.notifyChaptersAdded(novelId, cleanList.length, maxChapNum);
-      if (this.state.novels[novelId]) {
-        realtimeHub.notifyNovelUpdated(this.state.novels[novelId]);
-      }
     }
     if (isSupabaseConfigured()) {
       await saveSupabaseChapters(cleanList);

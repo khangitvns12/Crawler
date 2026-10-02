@@ -80,7 +80,8 @@ export default function NovelDetailModal({
       .then(res => res.json())
       .then(data => {
         if (active && data.success && Array.isArray(data.data)) {
-          setChapters(data.data);
+          const sorted = [...data.data].sort((a, b) => a.chapterNumber - b.chapterNumber);
+          setChapters(sorted);
         }
       })
       .catch(() => {})

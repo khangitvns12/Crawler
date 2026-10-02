@@ -119,7 +119,132 @@ export function formatChapterDisplayTitle(
 }
 
 /**
+ * Strips watermarks, website source attributions, promotional signatures, and URLs
+ * commonly found at the bottom (and body) of scraped web novel chapters.
+ *
+ * Examples of removed attributions:
+ * - "Nguồn: truyenfull.vn"
+ * - "Nguồn: Tàng Thư Viện"
+ * - "Đọc truyện online tại TruyenFull..."
+ * - "Bạn đang đọc truyện tại Metruyenchu..."
+ * - "Truyện được chia sẻ tại truyenyy.vip"
+ * - "Ủng hộ nhóm dịch tại..."
+ * - "Theo dõi fanpage của chúng tôi..."
+ * - "Chúc các bạn đọc truyện vui vẻ!"
+ * - "请记住本书首发域名：..."
+ * - "69书吧 www.69shuba.com"
+ * - "本章未完，点击下一页继续阅读"
+ * - "https://truyenfull.vn/..."
+ */
+export function stripSourceWatermarks(content?: string | null): string {
+  if (!content || typeof content !== 'string') return '';
+
+  let text = content;
+
+  // 1. Remove BOM, zero-width characters
+  text = text.replace(/[\u200B-\u200D\uFEFF]/g, '');
+
+  // 2. Split into lines to inspect from bottom-up and filter watermarks
+  const lines = text.split('\n');
+
+  // Regex patterns that identify website attribution, promotional watermarks, or site credits
+  const watermarkLinePatterns = [
+    // Vietnamese source and credit watermarks
+    /^\s*(?:nguồn|nguon)\s*[:：\-–—\.]\s*.+$/i,
+    /^\s*(?:nguồn truyện|nguồn bản dịch|nguồn convert|nguồn st|nguồn sưu tầm|bản quyền)\s*[:：\-–—\.]\s*.+$/i,
+    /^\s*(?:đọc truyện|đọc bản dịch|xem truyện|xem bản dịch)\s+(?:tại|online|nhanh nhất|miễn phí|sớm nhất).+$/i,
+    /^\s*(?:bạn đang đọc|bạn đang xem)\s+.*(?:tại|online|ở|được dịch|được copy|được chia sẻ).+$/i,
+    /^\s*truyện\s+(?:được|chỉ)\s+(?:đăng tải|dịch|edit|chia sẻ|sưu tầm|copy|phát hành)\s+(?:tại|bởi|trên).+$/i,
+    /^\s*(?:ủng hộ|donate|mời cà phê)\s+(?:cho\s+)?(?:tác giả|converter|nhóm dịch|dịch giả).+$/i,
+    /^\s*(?:theo dõi|tham gia)\s+(?:fanpage|kênh|group|nhóm|chúng tôi|server|discord).+$/i,
+    /^\s*chúc\s+(?:bạn|các bạn|quý độc giả)\s+(?:đọc truyện vui vẻ|có những giây phút).+$/i,
+    /^\s*(?:mời các bạn|hãy|vui lòng)\s+đón đọc\s+chương tiếp theo.+$/i,
+    /^\s*(?:đừng quên|hãy)\s+(?:bình luận|vote|đánh giá|thả hoa|thả sao|tặng sao|tặng quà).+$/i,
+    /^\s*(?:xem thêm tại|truy cập website|ghé thăm)\s*[:：\-–—\.]?\s*.+$/i,
+    
+    // Popular site domain names standalone (e.g. "truyenfull.vn", "metruyenchu.com", "tangthuvien.vn")
+    /^\s*(?:truyện full|truyenfull|metruyenchu|tangthuvien|truyenchu|nettruyen|sstruyen|truyenyy|wikidich|truyenhdt|dtruyen|vipvandan|bachngocsach|gacsach|santruyen|webtruyen)\s*(?:\.(?:vn|com|net|org|vip|info|cc|top|me))?\s*[\.\:\-–—]*$/i,
+    
+    // Chinese source and promotional watermarks
+    /^\s*(?:请记住本书首发域名|一秒记住|手机版阅读网址|手机用户请访问|本书首发域名|最新域名|最新章节尽在).*$/i,
+    /^\s*(?:69书吧|笔趣阁|顶点小说|飘天文学|八零电子书|纵横中文网|起点中文网|飞卢小说网)\s*(?:www\.[a-z0-9\.\-]+)?.*$/i,
+    /^\s*(?:来源|出处|转载自|首发于)\s*[:：].*$/i,
+    /^\s*(?:求推荐票|求月票|求打赏|求订阅|求鲜花|求收藏|求自订).*$/i,
+    /^\s*(?:本章未完|点击下一页继续阅读).*$/i,
+    /^\s*（?本章完）?\s*$/i,
+    
+    // Japanese watermarks
+    /^\s*(?:※この作品は|転載禁止|小説家になろう|カクヨム).*$/i,
+    /^\s*(?:ブックマークや評価|感想や評価|応援コメント).*$/i,
+    
+    // English watermarks
+    /^\s*(?:source|originally published at|read on|support the author|support the translator)\s*[:：\-–—\.]\s*.+$/i,
+    /^\s*(?:you are reading this novel on|find more chapters on|read at the original website).+$/i,
+    
+    // Standalone URLs, links or domain patterns
+    /^\s*(?:https?:\/\/[^\s]+|www\.[a-zA-Z0-9\-]+(?:\.[a-zA-Z0-9\-]+)+(?:\/[^\s]*)?)\s*$/i,
+    /^\s*[a-zA-Z0-9\-]+(?:\.[a-zA-Z0-9\-]+)*\.(?:com|vn|net|org|co|cc|cx|top|vip|me|info|xyz|app|io)(?:\/[^\s]*)?\s*$/i,
+  ];
+
+  // Filter out any lines matching watermark patterns
+  const filteredLines: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      filteredLines.push('');
+      continue;
+    }
+
+    const isWatermark = watermarkLinePatterns.some(pattern => pattern.test(trimmed));
+    if (!isWatermark) {
+      filteredLines.push(line);
+    }
+  }
+
+  // Trim trailing empty lines, separator lines ("---", "***", "===") and signature lines from bottom
+  while (filteredLines.length > 0) {
+    const lastLine = filteredLines[filteredLines.length - 1].trim();
+    if (
+      !lastLine ||
+      /^[-–—_*\=~#\.\s]{3,}$/.test(lastLine) ||
+      watermarkLinePatterns.some(pattern => pattern.test(lastLine))
+    ) {
+      filteredLines.pop();
+    } else {
+      break;
+    }
+  }
+
+  // Also trim leading empty lines
+  while (filteredLines.length > 0 && !filteredLines[0].trim()) {
+    filteredLines.shift();
+  }
+
+  return filteredLines.join('\n');
+}
+
+/**
+ * Clean chapter content: strips watermarks, normalizes line breaks and paragraph spacing
+ */
+export function cleanChapterContent(content?: string | null): string {
+  if (!content) return '';
+  const stripped = stripSourceWatermarks(content);
+  
+  // Normalize paragraphs (collapse 3+ consecutive newlines into 2)
+  return stripped.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * Sorts chapters strictly by chapterNumber ascending
+ */
+export function sortChapters(chapters: Chapter[]): Chapter[] {
+  if (!Array.isArray(chapters)) return [];
+  return [...chapters].sort((a, b) => (a.chapterNumber ?? 0) - (b.chapterNumber ?? 0));
+}
+
+/**
  * Sanitize a single Chapter object, removing duplicate titles in both title and translatedTitle
+ * and stripping any source attribution or watermark from rawContent and translatedContent
  */
 export function sanitizeChapter(chapter: Chapter): Chapter {
   const cleanedTitle = cleanChapterTitle(chapter.title, chapter.chapterNumber) || `Chương ${chapter.chapterNumber}`;
@@ -127,17 +252,24 @@ export function sanitizeChapter(chapter: Chapter): Chapter {
     ? cleanChapterTitle(chapter.translatedTitle, chapter.chapterNumber)
     : undefined;
 
+  const cleanedRawContent = chapter.rawContent ? cleanChapterContent(chapter.rawContent) : '';
+  const cleanedTranslatedContent = chapter.translatedContent ? cleanChapterContent(chapter.translatedContent) : undefined;
+
   return {
     ...chapter,
     title: cleanedTitle,
     translatedTitle: cleanedTranslated,
+    rawContent: cleanedRawContent,
+    translatedContent: cleanedTranslatedContent,
+    wordCount: chapter.wordCount || (cleanedTranslatedContent || cleanedRawContent).split(/\s+/).filter(Boolean).length,
   };
 }
 
 /**
- * Sanitize an array of chapters
+ * Sanitize an array of chapters and sort them strictly by chapterNumber ascending
  */
 export function sanitizeChapters(chapters: Chapter[]): Chapter[] {
   if (!Array.isArray(chapters)) return [];
-  return chapters.map(sanitizeChapter);
+  const sanitized = chapters.map(sanitizeChapter);
+  return sortChapters(sanitized);
 }

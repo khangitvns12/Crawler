@@ -39,17 +39,24 @@ export default function LibraryView({
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [showSupabaseModal, setShowSupabaseModal] = useState(false);
 
-  const handleRefreshSync = async () => {
+  const handleSyncSupabase = async () => {
     setIsSyncing(true);
     setSyncStatus(null);
     try {
-      if (onRefreshNovels) await onRefreshNovels();
-      setSyncStatus('✓ Đã đồng bộ & làm mới dữ liệu');
+      const res = await fetch('/api/supabase/sync', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSyncStatus(`✓ ${data.message || 'Đã đồng bộ thành công với Supabase'}`);
+        if (onRefreshNovels) await onRefreshNovels();
+      } else {
+        setSyncStatus(data.message || 'Chưa cấu hình Supabase (.env)');
+        if (onRefreshNovels) await onRefreshNovels();
+      }
     } catch {
-      setSyncStatus('Lỗi làm mới');
+      setSyncStatus('Lỗi kết nối khi đồng bộ');
     } finally {
       setIsSyncing(false);
-      setTimeout(() => setSyncStatus(null), 3000);
+      setTimeout(() => setSyncStatus(null), 4000);
     }
   };
 
@@ -112,16 +119,16 @@ export default function LibraryView({
             <span>Supabase & CLI</span>
           </button>
 
-          {/* Refresh / Sync Button */}
+          {/* Supabase Sync Button */}
           <button
-            onClick={handleRefreshSync}
+            onClick={handleSyncSupabase}
             disabled={isSyncing}
             className="flex items-center gap-1.5 rounded-xl border border-slate-700/80 bg-slate-800/60 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 active:scale-95 disabled:opacity-50 transition-all"
-            title="Làm mới và đồng bộ dữ liệu tức thời"
+            title="Đồng bộ dữ liệu thời gian thực với cơ sở dữ liệu Supabase"
           >
-            <RefreshCw className={`h-3.5 w-3.5 text-indigo-400 ${isSyncing ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">Làm mới</span>
-            <span>{isSyncing ? '...' : ''}</span>
+            <RefreshCw className={`h-3.5 w-3.5 text-emerald-400 ${isSyncing ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">Đồng bộ Supabase</span>
+            <span className="sm:hidden">Đồng bộ</span>
           </button>
 
           <button

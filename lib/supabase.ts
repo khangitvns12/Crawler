@@ -244,13 +244,25 @@ export async function deleteSupabaseNovel(id: string): Promise<boolean> {
   const client = getSupabaseClient();
   if (!client) return false;
 
-  const { error } = await client.from('novels').delete().eq('id', id);
-  if (error) {
-    if (isTableNotFoundError(error)) return false;
-    console.warn('Supabase delete novel note:', error.message);
+  try {
+    // 1. Delete all chapters of this novel first to prevent foreign key constraint conflicts
+    const { error: chapError } = await client.from('chapters').delete().eq('novel_id', id);
+    if (chapError && !isTableNotFoundError(chapError)) {
+      console.warn('Supabase delete novel chapters notice:', chapError.message);
+    }
+
+    // 2. Delete the novel record itself
+    const { error: novelError } = await client.from('novels').delete().eq('id', id);
+    if (novelError) {
+      if (isTableNotFoundError(novelError)) return false;
+      console.warn('Supabase delete novel note:', novelError.message);
+      return false;
+    }
+    return true;
+  } catch (err: unknown) {
+    console.warn('Supabase deleteSupabaseNovel exception:', err);
     return false;
   }
-  return true;
 }
 
 export async function fetchSupabaseChapters(novelId: string): Promise<Chapter[]> {

@@ -1,7 +1,7 @@
 import * as cheerio from 'cheerio';
 import { CookieConfig, CrawlerConfig } from '@/types/novel';
 import { findPresetForUrl } from './preset-extractors';
-import { cleanChapterTitle } from './chapter-utils';
+import { cleanChapterTitle, cleanChapterContent } from './chapter-utils';
 
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
@@ -126,7 +126,7 @@ export async function fetchHtmlWithCookies(options: CrawlFetchOptions): Promise<
 }
 
 /**
- * Clean HTML element text into neat paragraphs
+ * Clean HTML element text into neat paragraphs and remove website source attributions/watermarks
  */
 function cleanContentHtml(html: string): string {
   let text = html
@@ -149,7 +149,8 @@ function cleanContentHtml(html: string): string {
     .map(line => line.trim())
     .filter(line => line.length > 0);
 
-  return lines.join('\n\n');
+  const rawParagraphs = lines.join('\n\n');
+  return cleanChapterContent(rawParagraphs);
 }
 
 /**
@@ -499,7 +500,8 @@ export async function inspectNovel(
     }
   }
 
-  // Renumber chapters sequentially and clean title prefixes
+  // Sort chapters naturally and renumber chapters sequentially and clean title prefixes
+  chapters.sort((a, b) => (a.number ?? 0) - (b.number ?? 0));
   chapters.forEach((ch, idx) => {
     ch.number = idx + 1;
     ch.title = cleanChapterTitle(ch.title, ch.number);
@@ -532,7 +534,9 @@ export async function scrapeChapterContent(
   const excludes = config.excludeSelectors || [
     'script', 'style', 'iframe', '.ads', '.advertisement', '.social-share',
     '.novel_attention', 'div.contentadv', '.bottom-ad', '.ads-holder',
-    'button', '.btn', '.navigation', '.prev-next', '#comment', '.comment-section'
+    'button', '.btn', '.navigation', '.prev-next', '#comment', '.comment-section',
+    '.watermark', '.source-note', '.chapter-source', '.signature', '.post-tail',
+    '.source', '.copyright', '.tail-info', '.ad-box', '.ad-container', '.reading-footer'
   ];
   $(excludes.join(', ')).remove();
 

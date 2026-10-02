@@ -73,9 +73,10 @@ export default function TranslationView({
       .then(res => res.json())
       .then(data => {
         if (!cancelled && data.success && Array.isArray(data.data)) {
-          setChapters(data.data);
-          if (data.data.length > 0) {
-            handleSelectInspectChapter(data.data[0]);
+          const sorted = [...data.data].sort((a, b) => a.chapterNumber - b.chapterNumber);
+          setChapters(sorted);
+          if (sorted.length > 0) {
+            handleSelectInspectChapter(sorted[0]);
           }
         }
       })

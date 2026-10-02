@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { serverStorage } from '@/lib/server-storage';
 import { Chapter } from '@/types/novel';
-import { cleanChapterTitle, sanitizeChapters } from '@/lib/chapter-utils';
+import { cleanChapterTitle, cleanChapterContent, sanitizeChapters, sortChapters } from '@/lib/chapter-utils';
 
 export async function GET(
   req: NextRequest,
@@ -34,6 +34,9 @@ export async function POST(
         ? cleanChapterTitle(ch.translatedTitle, chapterNumber)
         : undefined;
 
+      const rawCleaned = cleanChapterContent(ch.rawContent || '');
+      const transCleaned = ch.translatedContent ? cleanChapterContent(ch.translatedContent) : undefined;
+
       return {
         id: ch.id || `chap-${id}-${chapterNumber}-${Date.now()}`,
         novelId: id,
@@ -41,15 +44,18 @@ export async function POST(
         title: cleanedTitle,
         translatedTitle: cleanedTranslated,
         sourceUrl: ch.sourceUrl || '',
-        rawContent: ch.rawContent || '',
-        translatedContent: ch.translatedContent,
-        translationStatus: ch.translationStatus || (ch.translatedContent ? 'translated' : 'pending'),
+        rawContent: rawCleaned,
+        translatedContent: transCleaned,
+        translationStatus: ch.translationStatus || (transCleaned ? 'translated' : 'pending'),
         translationError: ch.translationError,
-        translatedAt: ch.translatedAt || (ch.translatedContent ? new Date().toISOString() : undefined),
-        wordCount: ch.wordCount || (ch.translatedContent || ch.rawContent || '').split(/\s+/).filter(Boolean).length,
+        translatedAt: ch.translatedAt || (transCleaned ? new Date().toISOString() : undefined),
+        wordCount: ch.wordCount || (transCleaned || rawCleaned).split(/\s+/).filter(Boolean).length,
         createdAt: ch.createdAt || new Date().toISOString(),
       };
     });
+
+    // Automatically sort chapters strictly in order
+    processedChapters.sort((a, b) => a.chapterNumber - b.chapterNumber);
 
     await serverStorage.saveChaptersAsync(processedChapters);
     return NextResponse.json({ success: true, count: processedChapters.length });

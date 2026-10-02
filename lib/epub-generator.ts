@@ -1,6 +1,6 @@
 import JSZip from 'jszip';
 import { Novel, Chapter } from '@/types/novel';
-import { formatChapterDisplayTitle } from './chapter-utils';
+import { formatChapterDisplayTitle, cleanChapterContent } from './chapter-utils';
 
 export interface EpubOptions {
   novel: Novel;
@@ -259,8 +259,9 @@ p {
 </html>`;
   oebps.file('info.xhtml', metaHtml);
 
-  // 5. Generate Chapters XHTML
-  const validChapters = chapters.length > 0 ? chapters : [
+  // 5. Generate Chapters XHTML - sorted strictly by chapter number
+  const sortedChapters = [...chapters].sort((a, b) => (a.chapterNumber ?? 0) - (b.chapterNumber ?? 0));
+  const validChapters = sortedChapters.length > 0 ? sortedChapters : [
     {
       id: 'chap_sample',
       novelId,
@@ -276,7 +277,7 @@ p {
   ];
 
   validChapters.forEach((ch, idx) => {
-    const chapNum = idx + 1;
+    const chapNum = ch.chapterNumber ?? idx + 1;
     const chapTitle = formatChapterDisplayTitle(
       chapNum,
       ch.title,
@@ -284,12 +285,15 @@ p {
     );
     
     let bodyContent = '';
+    const cleanRaw = cleanChapterContent(ch.rawContent || 'Nội dung gốc không có sẵn.');
+    const cleanTrans = cleanChapterContent(ch.translatedContent || ch.rawContent || 'Chương này chưa có nội dung.');
+
     if (contentType === 'original') {
-      bodyContent = textToXhtml(ch.rawContent || 'Nội dung gốc không có sẵn.');
+      bodyContent = textToXhtml(cleanRaw);
     } else if (contentType === 'both') {
       // Dual-language view
-      const rawParas = (ch.rawContent || '').split(/\n\s*\n/).filter(Boolean);
-      const transParas = (ch.translatedContent || ch.rawContent || '').split(/\n\s*\n/).filter(Boolean);
+      const rawParas = cleanRaw.split(/\n\s*\n/).filter(Boolean);
+      const transParas = cleanTrans.split(/\n\s*\n/).filter(Boolean);
       const maxLen = Math.max(rawParas.length, transParas.length);
       const combinedHtml: string[] = [];
       for (let p = 0; p < maxLen; p++) {
@@ -303,7 +307,7 @@ p {
       bodyContent = combinedHtml.join('\n');
     } else {
       // Translated only (default)
-      bodyContent = textToXhtml(ch.translatedContent || ch.rawContent || 'Chương này chưa có nội dung.');
+      bodyContent = textToXhtml(cleanTrans);
     }
 
     const chapHtml = `<?xml version="1.0" encoding="utf-8"?>

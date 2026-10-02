@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { Novel, Chapter, CookieConfig, CrawlerConfig } from '@/types/novel';
 import { SITE_PRESETS, findPresetForUrl } from '@/lib/preset-extractors';
-import { cleanChapterTitle, formatChapterDisplayTitle } from '@/lib/chapter-utils';
+import { cleanChapterTitle, cleanChapterContent, formatChapterDisplayTitle, sortChapters } from '@/lib/chapter-utils';
 import { 
   Compass, ShieldCheck, Key, RefreshCw, AlertCircle, Play, 
   Pause, CheckCircle2, ChevronDown, ChevronUp, Globe, FileText,
@@ -214,6 +214,7 @@ export default function CrawlerView({
 
         const rawTitle = data.data.title || item.title;
         const cleanedTitle = cleanChapterTitle(rawTitle, item.number) || `Chương ${item.number}`;
+        const cleanedContent = cleanChapterContent(data.data.content);
 
         const newChapter: Chapter = {
           id: `chap-${novelId}-${item.number}`,
@@ -221,17 +222,19 @@ export default function CrawlerView({
           chapterNumber: item.number,
           title: cleanedTitle,
           sourceUrl: item.url,
-          rawContent: data.data.content,
+          rawContent: cleanedContent,
           translationStatus: 'pending',
-          wordCount: data.data.wordCount,
+          wordCount: data.data.wordCount || cleanedContent.split(/\s+/).filter(Boolean).length,
           createdAt: new Date().toISOString(),
         };
 
         chaptersAccumulated.push(newChapter);
+        // Automatically keep chapters sorted by chapter number in state
+        chaptersAccumulated.sort((a, b) => a.chapterNumber - b.chapterNumber);
         setCrawledChapters([...chaptersAccumulated]);
 
         setCrawlLogs(prev => [
-          { text: `✓ Hoàn tất Chương ${item.number} (${data.data.wordCount} chữ)`, type: 'success' },
+          { text: `✓ Hoàn tất Chương ${item.number} (${data.data.wordCount} chữ) - Đã xóa nguồn/watermark`, type: 'success' },
           ...prev.slice(0, 50),
         ]);
       } catch (err: unknown) {
@@ -249,6 +252,13 @@ export default function CrawlerView({
         await new Promise(resolve => setTimeout(resolve, delayMs));
       }
     }
+
+    // Automatically sort all crawled chapters strictly by chapterNumber ascending
+    chaptersAccumulated.sort((a, b) => a.chapterNumber - b.chapterNumber);
+    setCrawlLogs(prev => [
+      { text: `⚡ Tự động sắp xếp hoàn chỉnh ${chaptersAccumulated.length} chương theo đúng thứ tự & lưu vào cơ sở dữ liệu`, type: 'success' },
+      ...prev.slice(0, 50),
+    ]);
 
     // Save Novel & Chapters to Library (and Firebase)
     const domain = new URL(url).hostname;

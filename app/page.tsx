@@ -11,25 +11,16 @@ import ReaderModal from '@/components/ReaderModal';
 import EpubExportModal from '@/components/EpubExportModal';
 import NovelDetailModal from '@/components/NovelDetailModal';
 import SupabaseModal from '@/components/SupabaseModal';
-import { useRealtimeNovels } from '@/hooks/useRealtimeNovels';
 import { motion, AnimatePresence } from 'motion/react';
-import { Compass, Sparkles, Download, Terminal, BookOpen, ChevronRight, ShieldCheck, Radio } from 'lucide-react';
+import { Compass, Sparkles, Download, Terminal, BookOpen, ChevronRight, ShieldCheck, CheckCircle2 } from 'lucide-react';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('library');
-
-  // Unified Realtime synchronization hook (Supabase Realtime + SSE + BroadcastChannel)
-  const {
-    novels,
-    setNovels,
-    isLoading,
-    isRealtimeConnected,
-    realtimeProvider,
-    lastEvent,
-    refreshNovels,
-    deleteNovel,
-    addOrUpdateNovel,
-  } = useRealtimeNovels();
+  const [novels, setNovels] = useState<Novel[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncToast, setSyncToast] = useState<string | null>(null);
+  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
 
   // Modals state
   const [readingNovel, setReadingNovel] = useState<Novel | null>(null);
@@ -38,7 +29,90 @@ export default function Home() {
   const [detailNovel, setDetailNovel] = useState<Novel | null>(null);
   const [selectedTranslateNovelId, setSelectedTranslateNovelId] = useState<string | undefined>(undefined);
   const [resumeNovel, setResumeNovel] = useState<Novel | null>(null);
-  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
+
+  const showToast = (msg: string) => {
+    setSyncToast(msg);
+    setTimeout(() => {
+      setSyncToast(null);
+    }, 4000);
+  };
+
+  const fetchNovelsList = async () => {
+    try {
+      const res = await fetch('/api/novels');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        setNovels(data.data);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /**
+   * Automatically synchronize novels & chapters with Supabase
+   */
+  const syncWithSupabase = async (isInitial = false) => {
+    setIsSyncing(true);
+    try {
+      const res = await fetch('/api/supabase/sync', { method: 'POST' });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        setNovels(data.data);
+        if (data.configured) {
+          showToast(`✓ ${data.message || 'Đã tự động đồng bộ dữ liệu với Supabase'}`);
+        }
+      } else if (!isInitial && data.message) {
+        showToast(data.message);
+      }
+    } catch (err) {
+      console.warn('Supabase sync note:', err);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // On page load: load local immediately, then auto-sync with Supabase in background
+  useEffect(() => {
+    let ignore = false;
+
+    const loadAndSync = async () => {
+      try {
+        const res = await fetch('/api/novels');
+        const data = await res.json();
+        if (!ignore && data.success && Array.isArray(data.data)) {
+          setNovels(data.data);
+        }
+      } catch {
+        // ignore
+      } finally {
+        if (!ignore) setIsLoading(false);
+      }
+
+      // Automatically sync with Supabase in background
+      try {
+        const syncRes = await fetch('/api/supabase/sync', { method: 'POST' });
+        const syncData = await syncRes.json();
+        if (!ignore && syncData.success && Array.isArray(syncData.data)) {
+          setNovels(syncData.data);
+          if (syncData.configured) {
+            setSyncToast(`✓ ${syncData.message || 'Đã tự động đồng bộ dữ liệu với Supabase'}`);
+            setTimeout(() => setSyncToast(null), 4000);
+          }
+        }
+      } catch (err) {
+        console.warn('Supabase sync note:', err);
+      }
+    };
+
+    loadAndSync();
+
+    return () => {
+      ignore = true;
+    };
+  }, []);
 
   // Compute metrics
   const totalChapters = novels.reduce((acc, n) => acc + (n.chaptersCount || 0), 0);
@@ -61,7 +135,15 @@ export default function Home() {
   };
 
   const handleNovelCrawled = (newNovel: Novel, chapters: Chapter[]) => {
-    addOrUpdateNovel(newNovel);
+    setNovels(prev => {
+      const existingIdx = prev.findIndex(n => n.id === newNovel.id);
+      if (existingIdx >= 0) {
+        const copy = [...prev];
+        copy[existingIdx] = newNovel;
+        return copy;
+      }
+      return [newNovel, ...prev];
+    });
   };
 
   const handleChapterTranslated = (novelId: string, updatedChapter: Chapter) => {
@@ -92,7 +174,20 @@ export default function Home() {
   };
 
   const handleDeleteNovel = async (id: string) => {
-    await deleteNovel(id);
+    try {
+      // Optimistically remove from state
+      setNovels(prev => prev.filter(n => n.id !== id));
+      showToast('Đang xóa truyện khỏi Supabase và thư viện...');
+
+      const res = await fetch(`/api/novels/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        showToast('✓ Đã xóa truyện thành công khỏi Supabase và thư viện');
+      } else {
+        showToast('Đã xóa cục bộ, kiểm tra lại kết nối Supabase');
+      }
+    } catch {
+      showToast('Đã xóa khỏi thư viện');
+    }
   };
 
   return (
@@ -105,28 +200,9 @@ export default function Home() {
         totalChapters={totalChapters}
         translatedChapters={totalTranslated}
         onOpenNewCrawler={() => setActiveTab('crawler')}
-        isRealtimeConnected={isRealtimeConnected}
-        realtimeProvider={realtimeProvider}
         onOpenSupabaseModal={() => setIsSupabaseModalOpen(true)}
+        isSyncing={isSyncing}
       />
-
-      {/* Realtime Live Event Toast */}
-      <AnimatePresence>
-        {lastEvent && (
-          <motion.div
-            initial={{ opacity: 0, y: -20, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20, scale: 0.95 }}
-            className="fixed top-16 right-4 z-50 flex items-center gap-2.5 rounded-xl bg-slate-900/95 border border-emerald-500/40 px-3.5 py-2 text-xs font-semibold text-emerald-300 shadow-xl shadow-emerald-500/10 backdrop-blur-md"
-          >
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-            <span>{lastEvent}</span>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Hero Banner for first-time or contextual presence */}
       {activeTab === 'library' && novels.length > 0 && (
@@ -193,7 +269,7 @@ export default function Home() {
                   setActiveTab('crawler');
                 }}
                 onDeleteNovel={handleDeleteNovel}
-                onRefreshNovels={refreshNovels}
+                onRefreshNovels={() => syncWithSupabase(false)}
               />
             </motion.div>
           )}
@@ -306,9 +382,17 @@ export default function Home() {
         />
       )}
 
-      {/* 4. Supabase Connection & CLI Modal */}
+      {/* 4. Supabase Modal */}
       {isSupabaseModalOpen && (
         <SupabaseModal onClose={() => setIsSupabaseModalOpen(false)} />
+      )}
+
+      {/* 5. Realtime Sync & Feedback Toast */}
+      {syncToast && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-xl border border-emerald-500/40 bg-slate-900/95 px-4 py-3 text-xs font-medium text-emerald-300 shadow-2xl shadow-emerald-500/10 backdrop-blur-md animate-in fade-in slide-in-from-bottom-2">
+          <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+          <span>{syncToast}</span>
+        </div>
       )}
     </div>
   );

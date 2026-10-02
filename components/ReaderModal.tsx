@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Novel, Chapter } from '@/types/novel';
-import { cleanChapterTitle, formatChapterDisplayTitle } from '@/lib/chapter-utils';
+import { cleanChapterTitle, cleanChapterContent, formatChapterDisplayTitle } from '@/lib/chapter-utils';
 import { 
   X, ChevronLeft, ChevronRight, BookOpen, Settings, List, 
   Sun, Moon, Compass, Sparkles, Sliders
@@ -44,7 +44,8 @@ export default function ReaderModal({
       .then(res => res.json())
       .then(data => {
         if (active && data.success && Array.isArray(data.data)) {
-          setChapters(data.data);
+          const sorted = [...data.data].sort((a, b) => a.chapterNumber - b.chapterNumber);
+          setChapters(sorted);
         }
       })
       .catch(() => {})
@@ -124,9 +125,10 @@ export default function ReaderModal({
     }
 
     if (displayLanguage === 'original') {
+      const cleanRaw = cleanChapterContent(currentChapter.rawContent || 'Chưa có nội dung gốc.');
       return (
         <div className="space-y-6">
-          {(currentChapter.rawContent || 'Chưa có nội dung gốc.').split(/\n\s*\n/).map((p, idx) => (
+          {cleanRaw.split(/\n\s*\n/).map((p, idx) => (
             <p key={idx} className="indent-6 leading-relaxed">
               {p.trim()}
             </p>
@@ -136,8 +138,8 @@ export default function ReaderModal({
     }
 
     if (displayLanguage === 'both') {
-      const rawParas = (currentChapter.rawContent || '').split(/\n\s*\n/).filter(Boolean);
-      const transParas = (currentChapter.translatedContent || currentChapter.rawContent || '').split(/\n\s*\n/).filter(Boolean);
+      const rawParas = cleanChapterContent(currentChapter.rawContent || '').split(/\n\s*\n/).filter(Boolean);
+      const transParas = cleanChapterContent(currentChapter.translatedContent || currentChapter.rawContent || '').split(/\n\s*\n/).filter(Boolean);
       const maxLen = Math.max(rawParas.length, transParas.length);
 
       return (
@@ -161,7 +163,8 @@ export default function ReaderModal({
     }
 
     // Default: Translated
-    const content = currentChapter.translatedContent || currentChapter.rawContent || 'Chương này chưa có nội dung.';
+    const chosen = currentChapter.translatedContent || currentChapter.rawContent || 'Chương này chưa có nội dung.';
+    const content = cleanChapterContent(chosen);
     const isTranslated = !!currentChapter.translatedContent;
 
     return (
