@@ -16,11 +16,19 @@ export interface NovelMetadata {
   author: string;
   description: string;
   coverUrl: string;
+  totalPages?: number;
   chapters: Array<{
     number: number;
     title: string;
     url: string;
   }>;
+}
+
+export interface InspectOptions {
+  cookieConfig?: CookieConfig;
+  customConfig?: CrawlerConfig;
+  fetchAllPages?: boolean;
+  maxPages?: number;
 }
 
 export interface ChapterContentResult {
@@ -83,7 +91,6 @@ export async function fetchHtmlWithCookies(options: CrawlFetchOptions): Promise<
       responseHeaders[key] = val;
     });
 
-    // Check content-type encoding if available (GBK / Big5 for Chinese raw sites)
     const contentType = response.headers.get('content-type') || '';
     let html = '';
 
@@ -121,7 +128,6 @@ export async function fetchHtmlWithCookies(options: CrawlFetchOptions): Promise<
  * Clean HTML element text into neat paragraphs
  */
 function cleanContentHtml(html: string): string {
-  // Replace <br> and <p> with newlines
   let text = html
     .replace(/<br\s*[\/]?>/gi, '\n')
     .replace(/<\/p>/gi, '\n\n')
@@ -135,10 +141,8 @@ function cleanContentHtml(html: string): string {
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'");
 
-  // Remove any remaining tags
   text = text.replace(/<[^>]+>/g, '');
 
-  // Split into lines, trim each, and remove excessive empty lines
   const lines = text
     .split('\n')
     .map(line => line.trim())
@@ -148,9 +152,261 @@ function cleanContentHtml(html: string): string {
 }
 
 /**
- * Inspect a novel main/table of contents URL and extract metadata
+ * Helper to extract chapter links from a cheerio document
  */
-export async function inspectNovel(url: string, cookieConfig?: CookieConfig, customConfig?: CrawlerConfig): Promise<NovelMetadata> {
+function extractChaptersFromCheerio(
+  $: cheerio.CheerioAPI,
+  config: CrawlerConfig,
+  currentUrl: string,
+  chapters: Array<{ number: number; title: string; url: string }>
+) {
+  const parsedOrigin = new URL(currentUrl);
+
+  // Collect potential chapter link elements
+  const selectors = [
+    config.chapterListSelector,
+    '.list-chapter a',
+    '#list-chapter a',
+    '.chapter-list a',
+    '#chapter-list a',
+    'ul.list-chapter li a',
+    '#list-chapter li a',
+    '.list-chapters a',
+    '#chapters-list a',
+    'div.list-chapter a',
+    'div.row-chapter a',
+    'a[href*="/chuong-"]',
+    'a[href*="/chap-"]',
+    'a[href*="/chapter-"]',
+    'a[href*="/chuong/"]',
+  ].filter(Boolean) as string[];
+
+  const foundElements = $(selectors.join(', '));
+
+  foundElements.each((_, el) => {
+    const linkTag = $(el);
+    const href = linkTag.attr('href');
+
+    if (!href || href.startsWith('javascript:') || href === '#') return;
+
+    let fullUrl = href;
+    try {
+      fullUrl = new URL(href, currentUrl).href;
+    } catch {
+      return;
+    }
+
+    // Strip hash (#list-chapter or any fragment anchor)
+    const cleanUrl = fullUrl.split('#')[0];
+
+    // Skip home or self links
+    if (
+      cleanUrl === currentUrl.split('#')[0] || 
+      cleanUrl === parsedOrigin.origin || 
+      cleanUrl === parsedOrigin.origin + '/'
+    ) return;
+
+    // Filter out non-chapter links (navigation, author, categories)
+    if (cleanUrl.match(/\/(the-loai|tac-gia|danh-sach|page|author|category|tag)\//i)) return;
+    if (cleanUrl.match(/\/trang-\d+\/?$/i)) return; // pagination page itself
+
+    // Extract chapter title
+    let chapTitle = linkTag.text().trim();
+    const attrTitle = linkTag.attr('title')?.trim();
+    if (attrTitle && (chapTitle.length < 3 || /^\d+$/.test(chapTitle))) {
+      chapTitle = attrTitle;
+    }
+
+    // Remove noisy icons, badges or leading symbols
+    chapTitle = chapTitle.replace(/^[\s\u200B\uFEFF\u00A0•\-\>✓★☆]+/g, '').trim();
+    if (!chapTitle) return;
+
+    // Deduplicate by clean canonical URL
+    if (!chapters.some(c => c.url.split('#')[0] === cleanUrl)) {
+      chapters.push({
+        number: chapters.length + 1,
+        title: chapTitle,
+        url: cleanUrl,
+      });
+    }
+  });
+}
+
+/**
+ * Detect pagination pages on multi-page novel sites (e.g. TruyenFull, Metruyenchu, Syosetu, etc.)
+ */
+function detectPaginationPages(
+  $: cheerio.CheerioAPI,
+  config: CrawlerConfig,
+  initialUrl: string,
+  maxPages: number = 150
+): { pageUrls: string[]; totalPages: number } {
+  const pageUrls: string[] = [];
+  let detectedTotalPages = 1;
+
+  // 1. Check TruyenFull's hidden inputs or attributes:
+  // e.g. <input type="hidden" id="total-page" value="66"> or data-total-page="66"
+  const totalPageInputs = $(
+    'input#total-page, input[name="total-page"], input#total_page, [data-total-page], [data-pages], input#truyen-total-page'
+  );
+  totalPageInputs.each((_, el) => {
+    const val = parseInt($(el).val() as string || $(el).attr('data-total-page') || $(el).attr('data-pages') || '1', 10);
+    if (!isNaN(val) && val > detectedTotalPages) {
+      detectedTotalPages = val;
+    }
+  });
+
+  // 2. Check <select> dropdown for chapters/pages (TruyenFull select.select-chapter)
+  $('select.select-chapter option, select[name*="page"] option, select.form-control option').each((_, el) => {
+    const optVal = $(el).attr('value') || '';
+    const optText = $(el).text() || '';
+    const m = optVal.match(/\/trang-(\d+)/i) || optText.match(/trang\s*(\d+)/i) || optVal.match(/[?&]page=(\d+)/i);
+    if (m) {
+      const num = parseInt(m[1], 10);
+      if (num > detectedTotalPages) detectedTotalPages = num;
+    }
+  });
+
+  // 3. Scan all pagination containers
+  const paginationElements = $(
+    config.paginationSelector ||
+    '.pagination, ul.pagination, #pagination, div.pagination, .page-nav, ul.page, .pager, div.pages, nav[aria-label*="page"]'
+  );
+
+  const foundLinks: Array<{ href: string; text: string }> = [];
+  paginationElements.find('a').each((_, el) => {
+    const href = $(el).attr('href');
+    const text = $(el).text().trim();
+    if (!href || href.startsWith('javascript:') || href === '#') return;
+    try {
+      const full = new URL(href, initialUrl).href;
+      if (!foundLinks.some(l => l.href === full)) {
+        foundLinks.push({ href: full, text });
+      }
+    } catch {
+      // ignore
+    }
+  });
+
+  // Check if any link contains page numbers like /trang-15/ or ?page=15 or ?p=15
+  let pagePattern: 'trang-slug' | 'query-page' | 'query-p' | 'page-slug' | 'discrete' = 'discrete';
+  let patternTemplate = '';
+
+  for (const { href, text } of foundLinks) {
+    // Check "Cuối", "Last", "末页" links for the absolute last page number
+    const isLastLink = /cuối|last|trang cuối|>>|末页|尾页/i.test(text);
+
+    const matchTrang = href.match(/(.*\/trang-)(\d+)(\/?.*)$/i);
+    if (matchTrang) {
+      const num = parseInt(matchTrang[2], 10);
+      if (num > detectedTotalPages) detectedTotalPages = num;
+      pagePattern = 'trang-slug';
+      patternTemplate = `${matchTrang[1]}{PAGE}${matchTrang[3] || '/'}`;
+      continue;
+    }
+
+    const matchPageSlug = href.match(/(.*\/page\/)(\d+)(\/?.*)$/i);
+    if (matchPageSlug) {
+      const num = parseInt(matchPageSlug[2], 10);
+      if (num > detectedTotalPages) detectedTotalPages = num;
+      pagePattern = 'page-slug';
+      patternTemplate = `${matchPageSlug[1]}{PAGE}${matchPageSlug[3] || '/'}`;
+      continue;
+    }
+
+    const matchQueryPage = href.match(/[?&]page=(\d+)/i);
+    if (matchQueryPage) {
+      const num = parseInt(matchQueryPage[1], 10);
+      if (num > detectedTotalPages) detectedTotalPages = num;
+      pagePattern = 'query-page';
+      continue;
+    }
+
+    const matchQueryP = href.match(/[?&]p=(\d+)/i);
+    if (matchQueryP) {
+      const num = parseInt(matchQueryP[1], 10);
+      if (num > detectedTotalPages) detectedTotalPages = num;
+      pagePattern = 'query-p';
+      continue;
+    }
+
+    if (isLastLink) {
+      const numMatch = href.match(/(\d+)/g);
+      if (numMatch) {
+        const lastNum = parseInt(numMatch[numMatch.length - 1], 10);
+        if (lastNum > detectedTotalPages && lastNum < 2000) {
+          detectedTotalPages = lastNum;
+        }
+      }
+    }
+  }
+
+  // Also check if initial URL itself has truyenfull domain
+  if (initialUrl.includes('truyenfull') && pagePattern === 'discrete') {
+    pagePattern = 'trang-slug';
+  }
+
+  const limitPages = Math.min(detectedTotalPages, maxPages);
+
+  // Clean the initial URL base (remove existing /trang-N/ or query params)
+  const cleanBase = initialUrl
+    .split('#')[0]
+    .replace(/\/trang-\d+\/?$/i, '')
+    .replace(/\/page\/\d+\/?$/i, '')
+    .replace(/[?&](page|p)=\d+/i, '')
+    .replace(/\/+$/, '');
+
+  if (pagePattern === 'trang-slug' && limitPages > 1) {
+    for (let p = 2; p <= limitPages; p++) {
+      if (patternTemplate && patternTemplate.includes('{PAGE}')) {
+        pageUrls.push(patternTemplate.replace('{PAGE}', p.toString()));
+      } else {
+        pageUrls.push(`${cleanBase}/trang-${p}/`);
+      }
+    }
+  } else if (pagePattern === 'page-slug' && limitPages > 1) {
+    for (let p = 2; p <= limitPages; p++) {
+      pageUrls.push(`${cleanBase}/page/${p}/`);
+    }
+  } else if (pagePattern === 'query-page' && limitPages > 1) {
+    for (let p = 2; p <= limitPages; p++) {
+      const u = new URL(initialUrl);
+      u.searchParams.set('page', p.toString());
+      pageUrls.push(u.href);
+    }
+  } else if (pagePattern === 'query-p' && limitPages > 1) {
+    for (let p = 2; p <= limitPages; p++) {
+      const u = new URL(initialUrl);
+      u.searchParams.set('p', p.toString());
+      pageUrls.push(u.href);
+    }
+  } else {
+    foundLinks.forEach(link => {
+      if (link.href !== initialUrl && !pageUrls.includes(link.href) && pageUrls.length < limitPages) {
+        pageUrls.push(link.href);
+      }
+    });
+  }
+
+  // Fallback for TruyenFull style if total-page was found but no links were parsed
+  if (pageUrls.length === 0 && detectedTotalPages > 1) {
+    for (let p = 2; p <= limitPages; p++) {
+      pageUrls.push(`${cleanBase}/trang-${p}/`);
+    }
+  }
+
+  return { pageUrls, totalPages: Math.max(detectedTotalPages, pageUrls.length + 1) };
+}
+
+/**
+ * Inspect a novel main/table of contents URL and extract metadata (with Multi-page Pagination support)
+ */
+export async function inspectNovel(
+  url: string,
+  cookieConfig?: CookieConfig,
+  customConfig?: CrawlerConfig,
+  options?: { fetchAllPages?: boolean; maxPages?: number }
+): Promise<NovelMetadata> {
   const { html } = await fetchHtmlWithCookies({ url, cookieConfig });
   const $ = cheerio.load(html);
   const preset = findPresetForUrl(url);
@@ -163,8 +419,7 @@ export async function inspectNovel(url: string, cookieConfig?: CookieConfig, cus
   }
   if (!title) {
     title = $('meta[property="og:title"]').attr('content') || $('title').text().trim();
-    // Clean title from site suffixes like " - TruyenFull", " | Syosetu"
-    title = title.replace(/\s*[-|_|–]\s*(TruyenFull|Metruyenchu|NovelFull|Syosetu|Biquge|69shuba|Đọc truyện).*$/i, '').trim();
+    title = title.replace(/\s*[-|_|–]\s*(TruyenFull|Metruyenchu|Tangthuvien|NovelFull|Syosetu|Biquge|69shuba|Đọc truyện).*$/i, '').trim();
   }
 
   // 2. Extract Author
@@ -205,50 +460,47 @@ export async function inspectNovel(url: string, cookieConfig?: CookieConfig, cus
     }
   }
 
-  // 5. Extract Chapter List / TOC
+  // 5. Extract Chapters on Page 1
   const chapters: Array<{ number: number; title: string; url: string }> = [];
-  const parsedOrigin = new URL(url);
+  extractChaptersFromCheerio($, config, url, chapters);
 
-  // Common chapter link heuristics
-  const chapterElements = $(config.chapterListSelector || '.chapter-list a, #chapter-list a, .list-chapter a, a[href*="chapter"], a[href*="chap"]');
+  // 6. Multi-page Pagination Handling
+  const maxPagesToFetch = options?.maxPages ?? 150;
+  const { pageUrls, totalPages } = detectPaginationPages($, config, url, maxPagesToFetch);
 
-  chapterElements.each((index, el) => {
-    let linkTag = $(el);
-    let href = linkTag.attr('href');
+  // Fast chunked parallel fetching with concurrency of 6 pages at a time
+  if (options?.fetchAllPages !== false && pageUrls.length > 0) {
+    const BATCH_SIZE = 6;
+    for (let i = 0; i < pageUrls.length; i += BATCH_SIZE) {
+      const chunk = pageUrls.slice(i, i + BATCH_SIZE);
+      const chunkResults = await Promise.allSettled(
+        chunk.map(pageUrl =>
+          fetchHtmlWithCookies({ url: pageUrl, cookieConfig, timeoutMs: 12000 })
+            .then(res => ({ pageUrl, html: res.html }))
+        )
+      );
 
-    // If chapterListSelector points to a container like <li>, find <a> inside
-    if (!href && config.chapterLinkSelector) {
-      const childLink = linkTag.find(config.chapterLinkSelector).first();
-      if (childLink.length) {
-        linkTag = childLink;
-        href = childLink.attr('href');
+      for (const res of chunkResults) {
+        if (res.status === 'fulfilled' && res.value.html) {
+          try {
+            const page$ = cheerio.load(res.value.html);
+            extractChaptersFromCheerio(page$, config, res.value.pageUrl, chapters);
+          } catch {
+            // Continue with other pages
+          }
+        }
+      }
+
+      // Small break between chunks to prevent server rate limiting
+      if (i + BATCH_SIZE < pageUrls.length) {
+        await new Promise(r => setTimeout(r, 60));
       }
     }
+  }
 
-    if (!href || href.startsWith('javascript:') || href === '#') return;
-
-    // Resolve relative URL
-    let fullUrl = href;
-    try {
-      fullUrl = new URL(href, url).href;
-    } catch {
-      return;
-    }
-
-    // Don't include non-chapter links (home, login, etc.)
-    if (fullUrl === url || fullUrl === parsedOrigin.origin + '/') return;
-
-    const chapTitle = linkTag.text().trim();
-    if (!chapTitle) return;
-
-    // Deduplicate by URL
-    if (!chapters.some(c => c.url === fullUrl)) {
-      chapters.push({
-        number: chapters.length + 1,
-        title: chapTitle,
-        url: fullUrl,
-      });
-    }
+  // Renumber chapters sequentially
+  chapters.forEach((ch, idx) => {
+    ch.number = idx + 1;
   });
 
   return {
@@ -256,6 +508,7 @@ export async function inspectNovel(url: string, cookieConfig?: CookieConfig, cus
     author: author || 'Khuyết danh',
     description: description || 'Không có tóm tắt giới thiệu.',
     coverUrl: coverUrl || '',
+    totalPages,
     chapters,
   };
 }

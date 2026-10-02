@@ -1,0 +1,50 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidNovel(data) {
+      return data.keys().hasAll(['id', 'title', 'author', 'chaptersCount']) &&
+             data.id is string && isValidId(data.id) &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 300 &&
+             data.author is string && data.author.size() <= 200 &&
+             data.chaptersCount is number && data.chaptersCount >= 0;
+    }
+
+    function isValidChapter(data) {
+      return data.keys().hasAll(['id', 'novelId', 'chapterNumber', 'title', 'rawContent']) &&
+             data.id is string && isValidId(data.id) &&
+             data.novelId is string && isValidId(data.novelId) &&
+             data.chapterNumber is number && data.chapterNumber >= 0 &&
+             data.title is string && data.title.size() <= 300 &&
+             data.rawContent is string && data.rawContent.size() <= 200000;
+    }
+
+    // Novels collection
+    match /novels/{novelId} {
+      allow read: if true;
+      allow create: if isValidId(novelId) && isValidNovel(request.resource.data);
+      allow update: if isValidId(novelId) && isValidNovel(request.resource.data);
+      allow delete: if isValidId(novelId);
+
+      // Chapters subcollection under novel
+      match /chapters/{chapterId} {
+        allow read: if true;
+        allow create: if isValidId(chapterId) && 
+                         exists(/databases/$(database)/documents/novels/$(novelId)) && 
+                         isValidChapter(request.resource.data);
+        allow update: if isValidId(chapterId) && 
+                         exists(/databases/$(database)/documents/novels/$(novelId)) && 
+                         isValidChapter(request.resource.data);
+        allow delete: if isValidId(chapterId);
+      }
+    }
+  }
+}

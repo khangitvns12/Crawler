@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
       updatedAt: now,
     };
 
-    const saved = serverStorage.saveNovel(novel);
+    const saved = await serverStorage.saveNovelAsync(novel);
     return NextResponse.json({ success: true, data: saved });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);

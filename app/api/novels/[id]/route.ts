@@ -31,7 +31,7 @@ export async function PUT(
       return NextResponse.json({ error: 'Không tìm thấy truyện' }, { status: 404 });
     }
 
-    const updated = serverStorage.saveNovel({
+    const updated = await serverStorage.saveNovelAsync({
       ...existing,
       ...body,
       id, // keep id fixed
@@ -51,7 +51,7 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const deleted = serverStorage.deleteNovel(id);
+    const deleted = await serverStorage.deleteNovelAsync(id);
     if (!deleted) {
       return NextResponse.json({ error: 'Không tìm thấy truyện để xóa' }, { status: 404 });
     }

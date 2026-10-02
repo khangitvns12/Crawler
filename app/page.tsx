@@ -24,24 +24,24 @@ export default function Home() {
   const [exportingEpubNovel, setExportingEpubNovel] = useState<Novel | null>(null);
   const [detailNovel, setDetailNovel] = useState<Novel | null>(null);
   const [selectedTranslateNovelId, setSelectedTranslateNovelId] = useState<string | undefined>(undefined);
+  const [resumeNovel, setResumeNovel] = useState<Novel | null>(null);
 
-  useEffect(() => {
-    let ignore = false;
+  const fetchNovelsList = () => {
     fetch('/api/novels')
       .then(res => res.json())
       .then(data => {
-        if (!ignore && data.success && Array.isArray(data.data)) {
+        if (data.success && Array.isArray(data.data)) {
           setNovels(data.data);
         }
       })
       .catch(() => {})
       .finally(() => {
-        if (!ignore) setIsLoading(false);
+        setIsLoading(false);
       });
+  };
 
-    return () => {
-      ignore = true;
-    };
+  useEffect(() => {
+    fetchNovelsList();
   }, []);
 
   // Compute metrics
@@ -57,6 +57,11 @@ export default function Home() {
   const handleOpenTranslate = (novel: Novel) => {
     setSelectedTranslateNovelId(novel.id);
     setActiveTab('translate');
+  };
+
+  const handleResumeCrawl = (novel: Novel) => {
+    setResumeNovel(novel);
+    setActiveTab('crawler');
   };
 
   const handleNovelCrawled = (newNovel: Novel, chapters: Chapter[]) => {
@@ -176,10 +181,15 @@ export default function Home() {
                 novels={novels}
                 onSelectNovelToRead={novel => handleOpenReader(novel, 1)}
                 onSelectNovelToTranslate={handleOpenTranslate}
+                onResumeCrawl={handleResumeCrawl}
                 onOpenEpubExport={novel => setExportingEpubNovel(novel)}
                 onOpenNovelDetail={novel => setDetailNovel(novel)}
-                onOpenNewCrawler={() => setActiveTab('crawler')}
+                onOpenNewCrawler={() => {
+                  setResumeNovel(null);
+                  setActiveTab('crawler');
+                }}
                 onDeleteNovel={handleDeleteNovel}
+                onRefreshNovels={fetchNovelsList}
               />
             </motion.div>
           )}
@@ -193,6 +203,9 @@ export default function Home() {
               transition={{ duration: 0.2 }}
             >
               <CrawlerView
+                key={resumeNovel ? resumeNovel.id : 'new-crawler'}
+                resumeNovel={resumeNovel}
+                onClearResumeNovel={() => setResumeNovel(null)}
                 onNovelCrawled={handleNovelCrawled}
                 onGoToTranslate={novel => {
                   setSelectedTranslateNovelId(novel.id);
@@ -283,6 +296,7 @@ export default function Home() {
           }}
           onReadChapter={(n, chapNum) => handleOpenReader(n, chapNum)}
           onTranslateNovel={n => handleOpenTranslate(n)}
+          onResumeCrawl={handleResumeCrawl}
           onOpenEpub={n => setExportingEpubNovel(n)}
           onDeleteNovel={handleDeleteNovel}
         />

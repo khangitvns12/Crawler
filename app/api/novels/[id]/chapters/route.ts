@@ -41,7 +41,7 @@ export async function POST(
       createdAt: ch.createdAt || new Date().toISOString(),
     }));
 
-    serverStorage.saveChapters(processedChapters);
+    await serverStorage.saveChaptersAsync(processedChapters);
     return NextResponse.json({ success: true, count: processedChapters.length });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);

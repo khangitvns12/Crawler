@@ -12,20 +12,30 @@ import {
 interface CrawlerViewProps {
   onNovelCrawled: (novel: Novel, chapters: Chapter[]) => void;
   onGoToTranslate: (novel: Novel) => void;
+  resumeNovel?: Novel | null;
+  onClearResumeNovel?: () => void;
 }
 
 export default function CrawlerView({
   onNovelCrawled,
   onGoToTranslate,
+  resumeNovel,
+  onClearResumeNovel,
 }: CrawlerViewProps) {
-  const [url, setUrl] = useState('');
-  const [detectedPreset, setDetectedPreset] = useState<string>('generic');
+  const [url, setUrl] = useState(resumeNovel?.sourceUrl || '');
+  const [detectedPreset, setDetectedPreset] = useState<string>(() => 
+    resumeNovel ? findPresetForUrl(resumeNovel.sourceUrl).id : 'generic'
+  );
   
   // Cookie Configuration
   const [showCookiePanel, setShowCookiePanel] = useState(false);
-  const [cookieString, setCookieString] = useState('');
-  const [userAgent, setUserAgent] = useState('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
-  const [referer, setReferer] = useState('');
+  const [cookieString, setCookieString] = useState(resumeNovel?.cookieConfig?.cookieString || '');
+  const [userAgent, setUserAgent] = useState(resumeNovel?.cookieConfig?.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+  const [referer, setReferer] = useState(resumeNovel?.cookieConfig?.referer || '');
+
+  // Pagination Configuration
+  const [fetchAllPages, setFetchAllPages] = useState(true);
+  const [maxPaginationPages, setMaxPaginationPages] = useState(150);
 
   // Cookie Test State
   const [isTestingCookie, setIsTestingCookie] = useState(false);
@@ -40,6 +50,7 @@ export default function CrawlerView({
     author: string;
     description: string;
     coverUrl: string;
+    totalPages?: number;
     chapters: Array<{ number: number; title: string; url: string }>;
   } | null>(null);
 
@@ -126,6 +137,8 @@ export default function CrawlerView({
           url: url.trim(),
           cookieConfig,
           crawlerConfig: preset.config,
+          fetchAllPages,
+          maxPages: maxPaginationPages,
         }),
       });
 
@@ -134,8 +147,14 @@ export default function CrawlerView({
 
       setInspectedNovel(data.data);
       if (data.data.chapters && data.data.chapters.length > 0) {
-        setFromChapter(1);
-        setToChapter(Math.min(data.data.chapters.length, 5));
+        if (resumeNovel) {
+          const existingCount = resumeNovel.chaptersCount || 0;
+          setFromChapter(existingCount + 1);
+          setToChapter(Math.max(existingCount + 1, data.data.chapters.length));
+        } else {
+          setFromChapter(1);
+          setToChapter(Math.min(data.data.chapters.length, 10));
+        }
       }
     } catch (err: unknown) {
       setInspectError(err instanceof Error ? err.message : String(err));
@@ -166,7 +185,7 @@ export default function CrawlerView({
 
     const preset = findPresetForUrl(url);
     const chaptersAccumulated: Chapter[] = [];
-    const novelId = `novel-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const novelId = resumeNovel ? resumeNovel.id : `novel-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
     for (let i = 0; i < targetChapters.length; i++) {
       const item = targetChapters[i];
@@ -226,50 +245,83 @@ export default function CrawlerView({
       }
     }
 
-    // Save Novel & Chapters to Library
+    // Save Novel & Chapters to Library (and Firebase)
     const domain = new URL(url).hostname;
     let origLang: Novel['originalLanguage'] = 'zh';
     if (domain.includes('syosetu') || domain.includes('kakuyomu')) origLang = 'ja';
     else if (domain.includes('novelfull')) origLang = 'en';
 
-    const finalNovel: Novel = {
-      id: novelId,
-      title: inspectedNovel.title,
-      author: inspectedNovel.author,
-      description: inspectedNovel.description,
-      coverUrl: inspectedNovel.coverUrl,
-      sourceUrl: url,
-      sourceDomain: domain,
-      originalLanguage: origLang,
-      targetLanguage: 'vi',
-      status: 'ongoing',
-      chaptersCount: chaptersAccumulated.length,
-      translatedChaptersCount: 0,
-      cookieConfig,
-      crawlerConfig: preset.config,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    if (resumeNovel) {
+      const highestChapterNumber = Math.max(
+        resumeNovel.chaptersCount || 0,
+        ...chaptersAccumulated.map(c => c.chapterNumber)
+      );
 
-    try {
-      // Save novel
-      await fetch('/api/novels', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(finalNovel),
-      });
+      const updatedNovel: Novel = {
+        ...resumeNovel,
+        chaptersCount: highestChapterNumber,
+        cookieConfig,
+        updatedAt: new Date().toISOString(),
+      };
 
-      // Save chapters
-      await fetch(`/api/novels/${novelId}/chapters`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(chaptersAccumulated),
-      });
+      try {
+        await fetch(`/api/novels/${resumeNovel.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedNovel),
+        });
 
-      setCrawledNovelResult(finalNovel);
-      onNovelCrawled(finalNovel, chaptersAccumulated);
-    } catch {
-      // Non-fatal
+        await fetch(`/api/novels/${resumeNovel.id}/chapters`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(chaptersAccumulated),
+        });
+
+        setCrawledNovelResult(updatedNovel);
+        onNovelCrawled(updatedNovel, chaptersAccumulated);
+      } catch {
+        // Non-fatal
+      }
+    } else {
+      const finalNovel: Novel = {
+        id: novelId,
+        title: inspectedNovel.title,
+        author: inspectedNovel.author,
+        description: inspectedNovel.description,
+        coverUrl: inspectedNovel.coverUrl,
+        sourceUrl: url,
+        sourceDomain: domain,
+        originalLanguage: origLang,
+        targetLanguage: 'vi',
+        status: 'ongoing',
+        chaptersCount: chaptersAccumulated.length,
+        translatedChaptersCount: 0,
+        cookieConfig,
+        crawlerConfig: preset.config,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      try {
+        // Save novel
+        await fetch('/api/novels', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(finalNovel),
+        });
+
+        // Save chapters
+        await fetch(`/api/novels/${novelId}/chapters`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(chaptersAccumulated),
+        });
+
+        setCrawledNovelResult(finalNovel);
+        onNovelCrawled(finalNovel, chaptersAccumulated);
+      } catch {
+        // Non-fatal
+      }
     }
 
     setIsCrawling(false);
@@ -289,6 +341,34 @@ export default function CrawlerView({
 
       {/* Main Scraper Card */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 sm:p-6 shadow-xl space-y-5">
+        {/* Resume Mode Banner */}
+        {resumeNovel && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-xs text-amber-200 shadow-inner">
+            <div className="flex items-start sm:items-center gap-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/20 text-amber-400 shrink-0">
+                <RefreshCw className="h-4 w-4" />
+              </div>
+              <div>
+                <div className="font-bold text-white text-sm">
+                  Chế độ tiếp tục cào truyện: <span className="text-amber-300">{resumeNovel.title}</span>
+                </div>
+                <div className="text-[11px] text-amber-200/80 mt-0.5">
+                  Thư viện hiện có <b>{resumeNovel.chaptersCount || 0} chương</b>. Khi bấm cào, các chương mới sẽ được thêm tiếp vào truyện và lưu tự động vào Firebase.
+                </div>
+              </div>
+            </div>
+            {onClearResumeNovel && (
+              <button
+                type="button"
+                onClick={onClearResumeNovel}
+                className="self-start sm:self-center shrink-0 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-[11px] font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+              >
+                Hủy / Cào truyện khác
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Step 1: Input URL */}
         <div>
           <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2">
@@ -301,7 +381,7 @@ export default function CrawlerView({
                 type="text"
                 value={url}
                 onChange={e => handleUrlChange(e.target.value)}
-                placeholder="Ví dụ: https://ncode.syosetu.com/n2267be/ hoặc https://www.69shuba.cx/book/48123.htm"
+                placeholder="Ví dụ: https://truyenfull.io/dau-pha-thuong-khung/ hoặc https://www.69shuba.cx/book/48123.htm"
                 className="w-full rounded-xl border border-slate-800 bg-slate-950 py-2.5 pl-10 pr-4 text-xs text-slate-200 placeholder-slate-500 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
               />
             </div>
@@ -324,33 +404,62 @@ export default function CrawlerView({
             </button>
           </div>
 
-          {/* Quick Preset Buttons */}
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-slate-400 font-medium">Mẫu thử nhanh:</span>
-            <button
-              onClick={() => handleUrlChange('https://ncode.syosetu.com/n2267be/')}
-              className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] text-slate-300 hover:border-slate-700 hover:text-white transition-colors"
-            >
-              🇯🇵 Syosetu (Re:Zero Nhật)
-            </button>
-            <button
-              onClick={() => handleUrlChange('https://www.69shuba.cx/book/48123.htm')}
-              className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] text-slate-300 hover:border-slate-700 hover:text-white transition-colors"
-            >
-              🇨🇳 69Shuba (Trung Raw)
-            </button>
-            <button
-              onClick={() => handleUrlChange('https://novelfull.net/sample-novel.html')}
-              className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] text-slate-300 hover:border-slate-700 hover:text-white transition-colors"
-            >
-              🇬🇧 NovelFull (Tiếng Anh)
-            </button>
+          {/* Quick Preset Buttons & Pagination Options */}
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-slate-400 font-medium">Mẫu thử nhanh:</span>
+              <button
+                type="button"
+                onClick={() => handleUrlChange('https://truyenfull.io/dau-pha-thuong-khung/')}
+                className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] text-slate-300 hover:border-slate-700 hover:text-white transition-colors"
+              >
+                🇻🇳 TruyenFull (Phân trang VN)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleUrlChange('https://ncode.syosetu.com/n2267be/')}
+                className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] text-slate-300 hover:border-slate-700 hover:text-white transition-colors"
+              >
+                🇯🇵 Syosetu (Nhật Bản)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleUrlChange('https://www.69shuba.cx/book/48123.htm')}
+                className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] text-slate-300 hover:border-slate-700 hover:text-white transition-colors"
+              >
+                🇨🇳 69Shuba (Trung Raw)
+              </button>
+            </div>
 
-            {detectedPreset && (
-              <span className="ml-auto rounded-full bg-indigo-500/10 border border-indigo-500/20 px-2.5 py-0.5 text-[10px] font-medium text-indigo-400">
-                Preset: {SITE_PRESETS.find(p => p.id === detectedPreset)?.name || 'Tự động'}
-              </span>
-            )}
+            {/* Pagination Controls */}
+            <div className="flex items-center gap-3 bg-slate-950/80 px-3 py-1.5 rounded-xl border border-slate-800 text-[11px]">
+              <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={fetchAllPages}
+                  onChange={e => setFetchAllPages(e.target.checked)}
+                  className="rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-0"
+                />
+                <span>Cào mọi trang mục lục</span>
+              </label>
+
+              {fetchAllPages && (
+                <div className="flex items-center gap-1 text-slate-400 border-l border-slate-800 pl-2">
+                  <span>Tối đa:</span>
+                  <select
+                    value={maxPaginationPages}
+                    onChange={e => setMaxPaginationPages(parseInt(e.target.value) || 150)}
+                    className="bg-slate-900 text-white border border-slate-700 rounded px-1.5 py-0.5 text-[11px] focus:outline-none"
+                  >
+                    <option value={20}>20 trang (~1.000 ch)</option>
+                    <option value={50}>50 trang (~2.500 ch)</option>
+                    <option value={100}>100 trang (~5.000 ch)</option>
+                    <option value={150}>150 trang (~7.500 ch)</option>
+                    <option value={300}>300 trang (~15.000 ch)</option>
+                  </select>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -522,6 +631,9 @@ export default function CrawlerView({
                   </span>
                   <span className="text-xs text-slate-400">
                     Tìm thấy <b className="text-white">{inspectedNovel.chapters.length}</b> chương
+                    {inspectedNovel.totalPages && inspectedNovel.totalPages > 1 && (
+                      <span className="text-amber-400 font-medium"> (trên {inspectedNovel.totalPages} trang mục lục)</span>
+                    )}
                   </span>
                 </div>
 
@@ -534,6 +646,39 @@ export default function CrawlerView({
                 <p className="text-xs text-slate-400 line-clamp-3 leading-relaxed">
                   {inspectedNovel.description}
                 </p>
+
+                {/* Resume helper details */}
+                {resumeNovel && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
+                    <span className="text-slate-400">Đã có trong thư viện:</span>
+                    <span className="rounded bg-slate-800 px-2 py-0.5 font-bold text-slate-200">
+                      Chương 1 - {resumeNovel.chaptersCount || 0} ({resumeNovel.chaptersCount || 0} ch)
+                    </span>
+                    {inspectedNovel.chapters.length > (resumeNovel.chaptersCount || 0) ? (
+                      <>
+                        <span className="text-emerald-400 font-medium">• Có thêm:</span>
+                        <span className="rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 font-bold">
+                          {inspectedNovel.chapters.length - (resumeNovel.chaptersCount || 0)} chương mới
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const nextCh = (resumeNovel.chaptersCount || 0) + 1;
+                            setFromChapter(nextCh);
+                            setToChapter(inspectedNovel.chapters.length);
+                          }}
+                          className="ml-auto rounded-lg bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500 transition-colors"
+                        >
+                          Chọn cào các chương mới ({inspectedNovel.chapters.length - (resumeNovel.chaptersCount || 0)} ch)
+                        </button>
+                      </>
+                    ) : (
+                      <span className="text-amber-400 text-xs italic">
+                        (Thư viện đã có đủ tất cả chương hiện có trên web)
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -645,21 +790,27 @@ export default function CrawlerView({
         {crawledNovelResult && !isCrawling && (
           <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500 text-slate-950">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500 text-slate-950 shrink-0">
                 <CheckCircle2 className="h-6 w-6" />
               </div>
               <div>
-                <h4 className="text-sm font-bold text-white">
-                  Đã cào thành công {crawledChapters.length} chương vào Thư viện!
-                </h4>
-                <p className="text-xs text-emerald-300/80">
-                  Dữ liệu đã được lưu trữ an toàn, sẵn sàng để dịch AI hoặc xuất file EPUB.
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-bold text-white">
+                    {resumeNovel ? `Đã cào thêm ${crawledChapters.length} chương mới!` : `Đã cào thành công ${crawledChapters.length} chương!`}
+                  </h4>
+                  <span className="rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-semibold">
+                    ✓ Đã lưu vào Firebase
+                  </span>
+                </div>
+                <p className="text-xs text-emerald-300/80 mt-0.5">
+                  Bộ truyện <b>&ldquo;{crawledNovelResult.title}&rdquo;</b> hiện có <b>{crawledNovelResult.chaptersCount} chương</b> đã được đồng bộ vào cơ sở dữ liệu Firebase Cloud Firestore.
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-2">
               <button
+                type="button"
                 onClick={() => onGoToTranslate(crawledNovelResult)}
                 className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-semibold text-white shadow-md shadow-indigo-600/30 hover:bg-indigo-500 transition-all"
               >

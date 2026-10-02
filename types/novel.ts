@@ -24,6 +24,7 @@ export interface CrawlerConfig {
   chapterTitleSelector?: string;
   chapterContentSelector?: string;
   nextPageSelector?: string;
+  paginationSelector?: string;
   excludeSelectors?: string[];
   delayMs?: number;
 }

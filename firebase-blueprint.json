@@ -1,0 +1,150 @@
+{
+  "entities": {
+    "Novel": {
+      "title": "Novel",
+      "description": "Thông tin tiểu thuyết đã cào và dịch",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Định danh duy nhất của tiểu thuyết"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Tên tiểu thuyết"
+        },
+        "originalTitle": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Tên gốc của tiểu thuyết"
+        },
+        "author": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Tác giả"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 10000,
+          "description": "Mô tả / tóm tắt nội dung"
+        },
+        "coverUrl": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "Đường dẫn ảnh bìa"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "URL nguồn gốc"
+        },
+        "sourceDomain": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Tên miền nguồn cào"
+        },
+        "originalLanguage": {
+          "type": "string",
+          "enum": ["zh", "ja", "ko", "en", "vi", "auto"]
+        },
+        "targetLanguage": {
+          "type": "string",
+          "enum": ["vi", "en"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["ongoing", "completed", "crawling", "paused"]
+        },
+        "chaptersCount": {
+          "type": "number",
+          "description": "Tổng số chương đã cào"
+        },
+        "translatedChaptersCount": {
+          "type": "number",
+          "description": "Số chương đã dịch AI"
+        },
+        "lastReadChapterNumber": {
+          "type": "number",
+          "description": "Chương đang đọc dở"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Thời điểm tạo"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Thời điểm cập nhật gần nhất"
+        }
+      },
+      "required": ["id", "title", "author", "chaptersCount"]
+    },
+    "Chapter": {
+      "title": "Chapter",
+      "description": "Nội dung chương truyện raw và bản dịch",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Định danh chương"
+        },
+        "novelId": {
+          "type": "string",
+          "description": "Định danh tiểu thuyết cha"
+        },
+        "chapterNumber": {
+          "type": "number",
+          "description": "Số thứ tự chương"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Tiêu đề chương gốc"
+        },
+        "translatedTitle": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Tiêu đề chương đã dịch"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "URL chương gốc"
+        },
+        "rawContent": {
+          "type": "string",
+          "maxLength": 200000,
+          "description": "Nội dung chương gốc"
+        },
+        "translatedContent": {
+          "type": "string",
+          "maxLength": 200000,
+          "description": "Nội dung chương đã dịch AI"
+        },
+        "translationStatus": {
+          "type": "string",
+          "enum": ["pending", "translating", "translated", "error"]
+        },
+        "wordCount": {
+          "type": "number",
+          "description": "Số từ"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Thời điểm tạo"
+        }
+      },
+      "required": ["id", "novelId", "chapterNumber", "title", "rawContent"]
+    }
+  },
+  "firestore": {
+    "/novels/{novelId}": {
+      "schema": "Novel",
+      "description": "Bộ sưu tập các tiểu thuyết trong thư viện"
+    },
+    "/novels/{novelId}/chapters/{chapterId}": {
+      "schema": "Chapter",
+      "description": "Subcollection chứa các chương của từng tiểu thuyết"
+    }
+  }
+}

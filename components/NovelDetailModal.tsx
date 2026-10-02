@@ -13,6 +13,7 @@ interface NovelDetailModalProps {
   onUpdateNovel: (updated: Novel) => void;
   onReadChapter: (novel: Novel, chapterNum: number) => void;
   onTranslateNovel: (novel: Novel) => void;
+  onResumeCrawl?: (novel: Novel) => void;
   onOpenEpub: (novel: Novel) => void;
   onDeleteNovel: (id: string) => void;
 }
@@ -23,11 +24,16 @@ export default function NovelDetailModal({
   onUpdateNovel,
   onReadChapter,
   onTranslateNovel,
+  onResumeCrawl,
   onOpenEpub,
   onDeleteNovel,
 }: NovelDetailModalProps) {
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [isLoadingChapters, setIsLoadingChapters] = useState(true);
+
+  // Check update state
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [updateResult, setUpdateResult] = useState<{ webCount: number; newCount: number } | null>(null);
 
   // Edit mode
   const [isEditingMeta, setIsEditingMeta] = useState(false);
@@ -36,6 +42,36 @@ export default function NovelDetailModal({
   const [description, setDescription] = useState(novel.description);
   const [coverUrl, setCoverUrl] = useState(novel.coverUrl);
   const [isSaving, setIsSaving] = useState(false);
+
+  const handleCheckWebUpdate = async () => {
+    if (!novel.sourceUrl) return;
+    setIsCheckingUpdate(true);
+    setUpdateResult(null);
+    try {
+      const res = await fetch('/api/crawler/inspect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: novel.sourceUrl,
+          cookieConfig: novel.cookieConfig,
+          crawlerConfig: novel.crawlerConfig,
+          fetchAllPages: true,
+          maxPages: 150,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.data && Array.isArray(data.data.chapters)) {
+        const webCount = data.data.chapters.length;
+        const currentCount = novel.chaptersCount || chapters.length || 0;
+        const diff = Math.max(0, webCount - currentCount);
+        setUpdateResult({ webCount, newCount: diff });
+      }
+    } catch {
+      // ignore
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -100,6 +136,20 @@ export default function NovelDetailModal({
           </div>
 
           <div className="flex items-center gap-2">
+            {onResumeCrawl && (
+              <button
+                onClick={() => {
+                  onClose();
+                  onResumeCrawl(novel);
+                }}
+                className="flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-500/20 transition-colors"
+                title="Tiếp tục cào thêm chương mới từ nguồn"
+              >
+                <RefreshCw className="h-3.5 w-3.5 text-amber-400" />
+                <span>Tiếp tục cào</span>
+              </button>
+            )}
+
             <button
               onClick={() => onOpenEpub(novel)}
               className="flex items-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20 transition-colors"
@@ -125,6 +175,37 @@ export default function NovelDetailModal({
           </div>
         </div>
 
+        {/* Update Notification Banner */}
+        {updateResult && (
+          <div className="bg-slate-950 border-b border-slate-800 px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs animate-in fade-in">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-white">Kiểm tra nguồn web:</span>
+              <span className="text-slate-300">
+                Web có <b>{updateResult.webCount} chương</b> (Thư viện có <b>{novel.chaptersCount} chương</b>)
+              </span>
+              {updateResult.newCount > 0 ? (
+                <span className="rounded-full bg-emerald-500/20 border border-emerald-500/30 px-2 py-0.5 text-emerald-300 font-bold">
+                  +{updateResult.newCount} chương mới!
+                </span>
+              ) : (
+                <span className="text-emerald-400 font-medium">✓ Đã đầy đủ, chưa có chương mới</span>
+              )}
+            </div>
+
+            {updateResult.newCount > 0 && onResumeCrawl && (
+              <button
+                onClick={() => {
+                  onClose();
+                  onResumeCrawl(novel);
+                }}
+                className="rounded-lg bg-emerald-600 px-3 py-1 text-[11px] font-bold text-white hover:bg-emerald-500 transition-colors"
+              >
+                Cào ngay {updateResult.newCount} chương mới
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Content body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {/* Metadata Section */}
@@ -133,13 +214,27 @@ export default function NovelDetailModal({
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">
                 Thông tin chi tiết tác phẩm
               </h3>
-              <button
-                onClick={() => setIsEditingMeta(!isEditingMeta)}
-                className="text-xs font-semibold text-indigo-400 hover:underline flex items-center gap-1"
-              >
-                <Edit3 className="h-3.5 w-3.5" />
-                <span>{isEditingMeta ? 'Hủy sửa' : 'Chỉnh sửa'}</span>
-              </button>
+              <div className="flex items-center gap-3">
+                {novel.sourceUrl && (
+                  <button
+                    type="button"
+                    onClick={handleCheckWebUpdate}
+                    disabled={isCheckingUpdate}
+                    className="text-xs font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                    title="Kiểm tra nguồn web xem có chương mới không"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${isCheckingUpdate ? 'animate-spin' : ''}`} />
+                    <span>{isCheckingUpdate ? 'Đang kiểm tra...' : 'Kiểm tra chương mới từ web'}</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => setIsEditingMeta(!isEditingMeta)}
+                  className="text-xs font-semibold text-indigo-400 hover:underline flex items-center gap-1"
+                >
+                  <Edit3 className="h-3.5 w-3.5" />
+                  <span>{isEditingMeta ? 'Hủy sửa' : 'Chỉnh sửa'}</span>
+                </button>
+              </div>
             </div>
 
             {isEditingMeta ? (

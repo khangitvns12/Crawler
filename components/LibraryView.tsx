@@ -5,31 +5,57 @@ import { Novel } from '@/types/novel';
 import { 
   Search, BookOpen, Download, Sparkles, SlidersHorizontal, 
   ExternalLink, Trash2, CheckCircle2, Clock, Globe, Copy, Check,
-  Layers, Plus
+  Layers, Plus, RefreshCw, Database
 } from 'lucide-react';
 
 interface LibraryViewProps {
   novels: Novel[];
   onSelectNovelToRead: (novel: Novel) => void;
   onSelectNovelToTranslate: (novel: Novel) => void;
+  onResumeCrawl: (novel: Novel) => void;
   onOpenEpubExport: (novel: Novel) => void;
   onOpenNovelDetail: (novel: Novel) => void;
   onOpenNewCrawler: () => void;
   onDeleteNovel: (id: string) => void;
+  onRefreshNovels?: () => void;
 }
 
 export default function LibraryView({
   novels,
   onSelectNovelToRead,
   onSelectNovelToTranslate,
+  onResumeCrawl,
   onOpenEpubExport,
   onOpenNovelDetail,
   onOpenNewCrawler,
   onDeleteNovel,
+  onRefreshNovels,
 }: LibraryViewProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'translated' | 'pending'>('all');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+
+  const handleSyncFirebase = async () => {
+    setIsSyncing(true);
+    setSyncStatus(null);
+    try {
+      const res = await fetch('/api/firebase/status', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        setSyncStatus(`✓ Đã đồng bộ ${data.count} truyện từ Firestore`);
+        if (onRefreshNovels) onRefreshNovels();
+      } else {
+        setSyncStatus('Lỗi đồng bộ');
+      }
+    } catch {
+      setSyncStatus('Lỗi kết nối Firebase');
+    } finally {
+      setIsSyncing(false);
+      setTimeout(() => setSyncStatus(null), 3500);
+    }
+  };
 
   const filteredNovels = novels.filter(n => {
     const matchesSearch = 
@@ -80,6 +106,19 @@ export default function LibraryView({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Firebase Database Status Badge & Sync */}
+          <button
+            onClick={handleSyncFirebase}
+            disabled={isSyncing}
+            className="flex items-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20 active:scale-95 disabled:opacity-50 transition-all"
+            title="Đồng bộ dữ liệu trực tiếp với Firebase Cloud Firestore"
+          >
+            <Database className="h-3.5 w-3.5 text-emerald-400" />
+            <span className="hidden sm:inline">Firebase:</span>
+            <span>{isSyncing ? 'Đang đồng bộ...' : 'Đã kết nối'}</span>
+            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+          </button>
+
           <button
             onClick={onOpenNewCrawler}
             className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-semibold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-500 active:scale-95 transition-all"
@@ -89,6 +128,13 @@ export default function LibraryView({
           </button>
         </div>
       </div>
+
+      {syncStatus && (
+        <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-xs text-emerald-300 flex items-center gap-2 animate-in fade-in">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+          <span>{syncStatus}</span>
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="flex flex-col gap-3 rounded-2xl border border-slate-800/80 bg-slate-900/60 p-3 sm:flex-row sm:items-center sm:justify-between">
@@ -269,23 +315,35 @@ export default function LibraryView({
 
                 {/* Bottom Action Buttons */}
                 <div className="mt-5 pt-3.5 border-t border-slate-800/80 flex flex-col gap-2">
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
                     {/* Read Offline */}
                     <button
                       onClick={() => onSelectNovelToRead(novel)}
-                      className="flex items-center justify-center gap-1.5 rounded-xl bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-100 hover:bg-slate-700 active:scale-95 transition-all"
+                      className="flex items-center justify-center gap-1 rounded-xl bg-slate-800 px-2 py-2 text-xs font-semibold text-slate-100 hover:bg-slate-700 active:scale-95 transition-all"
+                      title="Đọc truyện offline"
                     >
                       <BookOpen className="h-3.5 w-3.5 text-amber-400" />
                       <span>Đọc ngay</span>
                     </button>
 
+                    {/* Resume / Continue Crawl */}
+                    <button
+                      onClick={() => onResumeCrawl(novel)}
+                      className="flex items-center justify-center gap-1 rounded-xl border border-amber-500/30 bg-amber-500/10 px-2 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/20 active:scale-95 transition-all"
+                      title="Tiếp tục cào thêm chương mới cho bộ truyện này"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5 text-amber-400" />
+                      <span>Cào tiếp</span>
+                    </button>
+
                     {/* AI Translation */}
                     <button
                       onClick={() => onSelectNovelToTranslate(novel)}
-                      className="flex items-center justify-center gap-1.5 rounded-xl bg-indigo-600/20 border border-indigo-500/30 px-3 py-2 text-xs font-semibold text-indigo-300 hover:bg-indigo-600/30 active:scale-95 transition-all"
+                      className="flex items-center justify-center gap-1 rounded-xl bg-indigo-600/20 border border-indigo-500/30 px-2 py-2 text-xs font-semibold text-indigo-300 hover:bg-indigo-600/30 active:scale-95 transition-all"
+                      title="Dịch truyện bằng Gemini AI"
                     >
                       <Sparkles className="h-3.5 w-3.5 text-indigo-400" />
-                      <span>{isFullyTranslated ? 'Xem bản dịch' : 'Dịch AI'}</span>
+                      <span>{isFullyTranslated ? 'Bản dịch' : 'Dịch AI'}</span>
                     </button>
                   </div>
 

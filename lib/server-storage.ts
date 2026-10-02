@@ -1,8 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 import { Novel, Chapter } from '@/types/novel';
+import { db } from './firebase';
+import { collection, doc, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
 
-// In-memory cache backed by filesystem where possible
+// In-memory cache backed by filesystem and Firestore
 interface StorageState {
   novels: Record<string, Novel>;
   chapters: Record<string, Chapter[]>; // novelId -> chapters
@@ -240,8 +242,14 @@ Khoảnh khắc bàn tay nhỏ nhắn của cô bé chạm vào chuôi kiếm c�
   ],
 };
 
+function sanitizeFirestoreId(id: string): string {
+  if (!id) return `id_${Date.now()}`;
+  return id.replace(/[^a-zA-Z0-9_\-]/g, '_').slice(0, 120);
+}
+
 class ServerStorage {
   private state: StorageState;
+  private isHydrating: boolean = false;
 
   constructor() {
     this.state = {
@@ -258,6 +266,7 @@ class ServerStorage {
         const data = JSON.parse(raw);
         if (data && data.novels && Object.keys(data.novels).length > 0) {
           this.state = data;
+          this.hydrateFromFirestore();
           return;
         }
       }
@@ -271,6 +280,33 @@ class ServerStorage {
     });
     this.state.chapters = { ...INITIAL_SEED_CHAPTERS };
     this.saveState();
+
+    // Hydrate from Firestore in background
+    this.hydrateFromFirestore();
+  }
+
+  public async hydrateFromFirestore(): Promise<void> {
+    if (this.isHydrating) return;
+    this.isHydrating = true;
+    try {
+      const snap = await getDocs(collection(db, 'novels'));
+      if (!snap.empty) {
+        snap.forEach(docSnap => {
+          const data = docSnap.data() as Novel;
+          if (data && data.id) {
+            this.state.novels[data.id] = {
+              ...this.state.novels[data.id],
+              ...data,
+            };
+          }
+        });
+        this.saveState();
+      }
+    } catch (err) {
+      console.warn('Firestore hydration note:', err);
+    } finally {
+      this.isHydrating = false;
+    }
   }
 
   private saveState() {
@@ -291,8 +327,8 @@ class ServerStorage {
       const translatedCount = chaps.filter(c => c.translationStatus === 'translated').length;
       return {
         ...novel,
-        chaptersCount: chaps.length,
-        translatedChaptersCount: translatedCount,
+        chaptersCount: Math.max(novel.chaptersCount || 0, chaps.length),
+        translatedChaptersCount: Math.max(novel.translatedChaptersCount || 0, translatedCount),
       };
     });
   }
@@ -303,10 +339,37 @@ class ServerStorage {
     const chapters = this.getChapters(id);
     return {
       ...novel,
-      chaptersCount: chapters.length,
-      translatedChaptersCount: chapters.filter(c => c.translationStatus === 'translated').length,
+      chaptersCount: Math.max(novel.chaptersCount || 0, chapters.length),
+      translatedChaptersCount: Math.max(novel.translatedChaptersCount || 0, chapters.filter(c => c.translationStatus === 'translated').length),
       chapters,
     };
+  }
+
+  private async saveNovelToFirestore(novel: Novel): Promise<void> {
+    try {
+      const safeId = sanitizeFirestoreId(novel.id);
+      const firestorePayload = {
+        id: safeId,
+        title: (novel.title || 'Truyện không tên').slice(0, 300),
+        originalTitle: (novel.originalTitle || '').slice(0, 300),
+        author: (novel.author || 'Khuyết danh').slice(0, 200),
+        description: (novel.description || '').slice(0, 10000),
+        coverUrl: (novel.coverUrl || '').slice(0, 2000),
+        sourceUrl: (novel.sourceUrl || '').slice(0, 2000),
+        sourceDomain: (novel.sourceDomain || '').slice(0, 200),
+        originalLanguage: novel.originalLanguage || 'auto',
+        targetLanguage: novel.targetLanguage || 'vi',
+        status: novel.status || 'ongoing',
+        chaptersCount: typeof novel.chaptersCount === 'number' && novel.chaptersCount >= 0 ? novel.chaptersCount : 0,
+        translatedChaptersCount: typeof novel.translatedChaptersCount === 'number' && novel.translatedChaptersCount >= 0 ? novel.translatedChaptersCount : 0,
+        lastReadChapterNumber: novel.lastReadChapterNumber || 1,
+        createdAt: novel.createdAt || new Date().toISOString(),
+        updatedAt: novel.updatedAt || new Date().toISOString(),
+      };
+      await setDoc(doc(db, 'novels', safeId), firestorePayload, { merge: true });
+    } catch (e) {
+      console.warn('Firestore setDoc novel warning:', e);
+    }
   }
 
   public saveNovel(novel: Novel): Novel {
@@ -318,6 +381,16 @@ class ServerStorage {
     };
     this.state.novels[novel.id] = updated;
     this.saveState();
+
+    // Persist to Firebase Firestore
+    this.saveNovelToFirestore(updated).catch(() => {});
+
+    return updated;
+  }
+
+  public async saveNovelAsync(novel: Novel): Promise<Novel> {
+    const updated = this.saveNovel(novel);
+    await this.saveNovelToFirestore(updated);
     return updated;
   }
 
@@ -326,18 +399,85 @@ class ServerStorage {
       delete this.state.novels[id];
       delete this.state.chapters[id];
       this.saveState();
+
+      // Delete from Firebase Firestore
+      const safeId = sanitizeFirestoreId(id);
+      deleteDoc(doc(db, 'novels', safeId)).catch(e => {
+        console.warn('Firestore deleteDoc novel warning:', e);
+      });
       return true;
     }
     return false;
+  }
+
+  public async deleteNovelAsync(id: string): Promise<boolean> {
+    const ok = this.deleteNovel(id);
+    if (ok) {
+      try {
+        const safeId = sanitizeFirestoreId(id);
+        await deleteDoc(doc(db, 'novels', safeId));
+      } catch (e) {
+        console.warn('Firestore deleteDoc async error:', e);
+      }
+    }
+    return ok;
   }
 
   public getChapters(novelId: string): Chapter[] {
     return (this.state.chapters[novelId] || []).sort((a, b) => a.chapterNumber - b.chapterNumber);
   }
 
+  public async getChaptersAsync(novelId: string): Promise<Chapter[]> {
+    let list = this.getChapters(novelId);
+    if (list.length > 0) return list;
+
+    // Fallback: check Firestore subcollection
+    try {
+      const safeNovelId = sanitizeFirestoreId(novelId);
+      const snap = await getDocs(collection(db, 'novels', safeNovelId, 'chapters'));
+      if (!snap.empty) {
+        const remoteChapters: Chapter[] = [];
+        snap.forEach(d => {
+          remoteChapters.push(d.data() as Chapter);
+        });
+        remoteChapters.sort((a, b) => a.chapterNumber - b.chapterNumber);
+        this.state.chapters[novelId] = remoteChapters;
+        this.saveState();
+        return remoteChapters;
+      }
+    } catch (e) {
+      console.warn('Firestore chapters query fallback warning:', e);
+    }
+
+    return list;
+  }
+
   public getChapter(novelId: string, chapterNumber: number): Chapter | null {
     const chapters = this.state.chapters[novelId] || [];
     return chapters.find(c => c.chapterNumber === chapterNumber) || null;
+  }
+
+  private async saveChapterToFirestore(chapter: Chapter): Promise<void> {
+    try {
+      const safeNovelId = sanitizeFirestoreId(chapter.novelId);
+      const safeChapId = sanitizeFirestoreId(chapter.id);
+      const firestoreChapter = {
+        id: safeChapId,
+        novelId: safeNovelId,
+        chapterNumber: chapter.chapterNumber,
+        title: (chapter.title || `Chương ${chapter.chapterNumber}`).slice(0, 300),
+        translatedTitle: (chapter.translatedTitle || '').slice(0, 300),
+        sourceUrl: (chapter.sourceUrl || '').slice(0, 2000),
+        rawContent: (chapter.rawContent || '').slice(0, 195000),
+        translatedContent: (chapter.translatedContent || '').slice(0, 195000),
+        translationStatus: chapter.translationStatus || 'pending',
+        wordCount: chapter.wordCount || 0,
+        createdAt: chapter.createdAt || new Date().toISOString(),
+      };
+      await setDoc(doc(db, 'novels', safeNovelId, 'chapters', safeChapId), firestoreChapter, { merge: true });
+    } catch (e) {
+      console.warn('Firestore chapter setDoc error:', e);
+    }
   }
 
   public saveChapter(chapter: Chapter): Chapter {
@@ -360,12 +500,34 @@ class ServerStorage {
     }
 
     this.saveState();
+
+    // Persist chapter to Firestore subcollection /novels/{novelId}/chapters/{chapterId}
+    this.saveChapterToFirestore(chapter).catch(() => {});
+
     return chapter;
+  }
+
+  public async saveChapterAsync(chapter: Chapter): Promise<Chapter> {
+    const saved = this.saveChapter(chapter);
+    await this.saveChapterToFirestore(saved);
+    return saved;
   }
 
   public saveChapters(chapters: Chapter[]): void {
     for (const ch of chapters) {
       this.saveChapter(ch);
+    }
+  }
+
+  public async saveChaptersAsync(chapters: Chapter[]): Promise<void> {
+    for (const ch of chapters) {
+      this.saveChapter(ch);
+    }
+    // Batch save to Firestore in chunks of 5
+    const CHUNK_SIZE = 5;
+    for (let i = 0; i < chapters.length; i += CHUNK_SIZE) {
+      const chunk = chapters.slice(i, i + CHUNK_SIZE);
+      await Promise.allSettled(chunk.map(ch => this.saveChapterToFirestore(ch)));
     }
   }
 

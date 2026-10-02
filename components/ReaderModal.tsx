@@ -58,11 +58,11 @@ export default function ReaderModal({
 
   const currentChapter = chapters.find(c => c.chapterNumber === currentChapterNumber) || chapters[0] || null;
 
-  const changeChapterNumber = (num: number) => {
+  const changeChapterNumber = React.useCallback((num: number) => {
     setCurrentChapterNumber(num);
     window.scrollTo({ top: 0, behavior: 'smooth' });
     if (onChapterChange) onChapterChange(num);
-  };
+  }, [onChapterChange]);
 
   // Keyboard navigation (Arrow keys, Esc)
   useEffect(() => {
@@ -79,7 +79,7 @@ export default function ReaderModal({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentChapterNumber, chapters, onClose]);
+  }, [currentChapterNumber, chapters, onClose, changeChapterNumber]);
 
   const handleNextChapter = () => {
     const nextChap = chapters.find(c => c.chapterNumber === currentChapterNumber + 1);
