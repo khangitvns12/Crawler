@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { Novel, Chapter, CookieConfig, CrawlerConfig } from '@/types/novel';
 import { SITE_PRESETS, findPresetForUrl } from '@/lib/preset-extractors';
+import { cleanChapterTitle, formatChapterDisplayTitle } from '@/lib/chapter-utils';
 import { 
   Compass, ShieldCheck, Key, RefreshCw, AlertCircle, Play, 
   Pause, CheckCircle2, ChevronDown, ChevronUp, Globe, FileText,
@@ -189,10 +190,11 @@ export default function CrawlerView({
 
     for (let i = 0; i < targetChapters.length; i++) {
       const item = targetChapters[i];
-      setCurrentChapterTitle(`[Chương ${item.number}] ${item.title}`);
+      const displayTitle = formatChapterDisplayTitle(item.number, item.title);
+      setCurrentChapterTitle(displayTitle);
       
       setCrawlLogs(prev => [
-        { text: `Đang cào Chương ${item.number}: ${item.title}...`, type: 'info' },
+        { text: `Đang cào ${displayTitle}...`, type: 'info' },
         ...prev.slice(0, 50),
       ]);
 
@@ -210,11 +212,14 @@ export default function CrawlerView({
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Lỗi bóc tách chương');
 
+        const rawTitle = data.data.title || item.title;
+        const cleanedTitle = cleanChapterTitle(rawTitle, item.number) || `Chương ${item.number}`;
+
         const newChapter: Chapter = {
           id: `chap-${novelId}-${item.number}`,
           novelId,
           chapterNumber: item.number,
-          title: data.data.title || item.title,
+          title: cleanedTitle,
           sourceUrl: item.url,
           rawContent: data.data.content,
           translationStatus: 'pending',

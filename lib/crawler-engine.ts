@@ -1,6 +1,7 @@
 import * as cheerio from 'cheerio';
 import { CookieConfig, CrawlerConfig } from '@/types/novel';
 import { findPresetForUrl } from './preset-extractors';
+import { cleanChapterTitle } from './chapter-utils';
 
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
@@ -217,8 +218,8 @@ function extractChaptersFromCheerio(
       chapTitle = attrTitle;
     }
 
-    // Remove noisy icons, badges or leading symbols
-    chapTitle = chapTitle.replace(/^[\s\u200B\uFEFF\u00A0•\-\>✓★☆]+/g, '').trim();
+    // Remove noisy icons, badges or leading symbols and clean duplicate chapter prefixes
+    chapTitle = cleanChapterTitle(chapTitle, chapters.length + 1);
     if (!chapTitle) return;
 
     // Deduplicate by clean canonical URL
@@ -498,9 +499,10 @@ export async function inspectNovel(
     }
   }
 
-  // Renumber chapters sequentially
+  // Renumber chapters sequentially and clean title prefixes
   chapters.forEach((ch, idx) => {
     ch.number = idx + 1;
+    ch.title = cleanChapterTitle(ch.title, ch.number);
   });
 
   return {
@@ -545,6 +547,9 @@ export async function scrapeChapterContent(
   if (!title) {
     title = $('title').text().trim().replace(/\s*[-|_].*$/, '');
   }
+
+  // Clean duplicate prefixes like "Chương 1: Chương 1:"
+  title = cleanChapterTitle(title);
 
   // 2. Extract Content
   let contentHtml = '';

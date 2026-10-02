@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Novel, Chapter } from '@/types/novel';
+import { cleanChapterTitle, formatChapterDisplayTitle } from '@/lib/chapter-utils';
 import { 
   X, BookOpen, Download, Sparkles, Trash2, Edit3, 
   CheckCircle2, Clock, Save, RefreshCw, ExternalLink
@@ -328,11 +329,11 @@ export default function NovelDetailModal({
                   >
                     <div className="overflow-hidden pr-3">
                       <div className="font-bold text-slate-200 truncate">
-                        Chương {ch.chapterNumber}: {ch.translatedTitle || ch.title}
+                        {formatChapterDisplayTitle(ch.chapterNumber, ch.title, ch.translatedTitle)}
                       </div>
                       {ch.translatedTitle && (
                         <div className="text-[10px] text-slate-500 truncate italic">
-                          Gốc: {ch.title}
+                          Gốc: {cleanChapterTitle(ch.title, ch.chapterNumber)}
                         </div>
                       )}
                     </div>

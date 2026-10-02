@@ -3,6 +3,7 @@ import path from 'path';
 import { Novel, Chapter } from '@/types/novel';
 import { db } from './firebase';
 import { collection, doc, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
+import { cleanChapterTitle, sanitizeChapter, sanitizeChapters } from './chapter-utils';
 
 // In-memory cache backed by filesystem and Firestore
 interface StorageState {
@@ -265,6 +266,12 @@ class ServerStorage {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         const data = JSON.parse(raw);
         if (data && data.novels && Object.keys(data.novels).length > 0) {
+          // Sanitize all chapters to remove any previously persisted duplicate prefixes
+          if (data.chapters) {
+            Object.keys(data.chapters).forEach(nId => {
+              data.chapters[nId] = sanitizeChapters(data.chapters[nId]);
+            });
+          }
           this.state = data;
           this.hydrateFromFirestore();
           return;
@@ -274,11 +281,14 @@ class ServerStorage {
       // Fallback
     }
 
-    // Seed defaults
+    // Seed defaults with sanitized chapter titles
     INITIAL_SEED_NOVELS.forEach(n => {
       this.state.novels[n.id] = n;
     });
-    this.state.chapters = { ...INITIAL_SEED_CHAPTERS };
+    this.state.chapters = {};
+    Object.keys(INITIAL_SEED_CHAPTERS).forEach(nId => {
+      this.state.chapters[nId] = sanitizeChapters(INITIAL_SEED_CHAPTERS[nId]);
+    });
     this.saveState();
 
     // Hydrate from Firestore in background
@@ -424,12 +434,13 @@ class ServerStorage {
   }
 
   public getChapters(novelId: string): Chapter[] {
-    return (this.state.chapters[novelId] || []).sort((a, b) => a.chapterNumber - b.chapterNumber);
+    const list = (this.state.chapters[novelId] || []).sort((a, b) => a.chapterNumber - b.chapterNumber);
+    return sanitizeChapters(list);
   }
 
   public async getChaptersAsync(novelId: string): Promise<Chapter[]> {
     let list = this.getChapters(novelId);
-    if (list.length > 0) return list;
+    if (list.length > 0) return sanitizeChapters(list);
 
     // Fallback: check Firestore subcollection
     try {
@@ -441,9 +452,10 @@ class ServerStorage {
           remoteChapters.push(d.data() as Chapter);
         });
         remoteChapters.sort((a, b) => a.chapterNumber - b.chapterNumber);
-        this.state.chapters[novelId] = remoteChapters;
+        const cleanRemote = sanitizeChapters(remoteChapters);
+        this.state.chapters[novelId] = cleanRemote;
         this.saveState();
-        return remoteChapters;
+        return cleanRemote;
       }
     } catch (e) {
       console.warn('Firestore chapters query fallback warning:', e);
@@ -453,7 +465,7 @@ class ServerStorage {
   }
 
   public getChapter(novelId: string, chapterNumber: number): Chapter | null {
-    const chapters = this.state.chapters[novelId] || [];
+    const chapters = this.getChapters(novelId);
     return chapters.find(c => c.chapterNumber === chapterNumber) || null;
   }
 
@@ -461,18 +473,19 @@ class ServerStorage {
     try {
       const safeNovelId = sanitizeFirestoreId(chapter.novelId);
       const safeChapId = sanitizeFirestoreId(chapter.id);
+      const cleanChap = sanitizeChapter(chapter);
       const firestoreChapter = {
         id: safeChapId,
         novelId: safeNovelId,
-        chapterNumber: chapter.chapterNumber,
-        title: (chapter.title || `Chương ${chapter.chapterNumber}`).slice(0, 300),
-        translatedTitle: (chapter.translatedTitle || '').slice(0, 300),
-        sourceUrl: (chapter.sourceUrl || '').slice(0, 2000),
-        rawContent: (chapter.rawContent || '').slice(0, 195000),
-        translatedContent: (chapter.translatedContent || '').slice(0, 195000),
-        translationStatus: chapter.translationStatus || 'pending',
-        wordCount: chapter.wordCount || 0,
-        createdAt: chapter.createdAt || new Date().toISOString(),
+        chapterNumber: cleanChap.chapterNumber,
+        title: (cleanChap.title || `Chương ${cleanChap.chapterNumber}`).slice(0, 300),
+        translatedTitle: (cleanChap.translatedTitle || '').slice(0, 300),
+        sourceUrl: (cleanChap.sourceUrl || '').slice(0, 2000),
+        rawContent: (cleanChap.rawContent || '').slice(0, 195000),
+        translatedContent: (cleanChap.translatedContent || '').slice(0, 195000),
+        translationStatus: cleanChap.translationStatus || 'pending',
+        wordCount: cleanChap.wordCount || 0,
+        createdAt: cleanChap.createdAt || new Date().toISOString(),
       };
       await setDoc(doc(db, 'novels', safeNovelId, 'chapters', safeChapId), firestoreChapter, { merge: true });
     } catch (e) {
@@ -481,30 +494,31 @@ class ServerStorage {
   }
 
   public saveChapter(chapter: Chapter): Chapter {
-    if (!this.state.chapters[chapter.novelId]) {
-      this.state.chapters[chapter.novelId] = [];
+    const cleanChap = sanitizeChapter(chapter);
+    if (!this.state.chapters[cleanChap.novelId]) {
+      this.state.chapters[cleanChap.novelId] = [];
     }
-    const list = this.state.chapters[chapter.novelId];
-    const existingIndex = list.findIndex(c => c.chapterNumber === chapter.chapterNumber);
+    const list = this.state.chapters[cleanChap.novelId];
+    const existingIndex = list.findIndex(c => c.chapterNumber === cleanChap.chapterNumber);
     if (existingIndex >= 0) {
-      list[existingIndex] = { ...list[existingIndex], ...chapter };
+      list[existingIndex] = { ...list[existingIndex], ...cleanChap };
     } else {
-      list.push(chapter);
+      list.push(cleanChap);
     }
 
     // Update novel chapter counts
-    if (this.state.novels[chapter.novelId]) {
-      this.state.novels[chapter.novelId].chaptersCount = list.length;
-      this.state.novels[chapter.novelId].translatedChaptersCount = list.filter(c => c.translationStatus === 'translated').length;
-      this.state.novels[chapter.novelId].updatedAt = new Date().toISOString();
+    if (this.state.novels[cleanChap.novelId]) {
+      this.state.novels[cleanChap.novelId].chaptersCount = list.length;
+      this.state.novels[cleanChap.novelId].translatedChaptersCount = list.filter(c => c.translationStatus === 'translated').length;
+      this.state.novels[cleanChap.novelId].updatedAt = new Date().toISOString();
     }
 
     this.saveState();
 
     // Persist chapter to Firestore subcollection /novels/{novelId}/chapters/{chapterId}
-    this.saveChapterToFirestore(chapter).catch(() => {});
+    this.saveChapterToFirestore(cleanChap).catch(() => {});
 
-    return chapter;
+    return cleanChap;
   }
 
   public async saveChapterAsync(chapter: Chapter): Promise<Chapter> {
@@ -514,19 +528,21 @@ class ServerStorage {
   }
 
   public saveChapters(chapters: Chapter[]): void {
-    for (const ch of chapters) {
+    const cleanList = sanitizeChapters(chapters);
+    for (const ch of cleanList) {
       this.saveChapter(ch);
     }
   }
 
   public async saveChaptersAsync(chapters: Chapter[]): Promise<void> {
-    for (const ch of chapters) {
+    const cleanList = sanitizeChapters(chapters);
+    for (const ch of cleanList) {
       this.saveChapter(ch);
     }
     // Batch save to Firestore in chunks of 5
     const CHUNK_SIZE = 5;
-    for (let i = 0; i < chapters.length; i += CHUNK_SIZE) {
-      const chunk = chapters.slice(i, i + CHUNK_SIZE);
+    for (let i = 0; i < cleanList.length; i += CHUNK_SIZE) {
+      const chunk = cleanList.slice(i, i + CHUNK_SIZE);
       await Promise.allSettled(chunk.map(ch => this.saveChapterToFirestore(ch)));
     }
   }
@@ -540,7 +556,7 @@ class ServerStorage {
     const ch = this.getChapter(novelId, chapterNumber);
     if (!ch) return null;
 
-    ch.translatedTitle = translatedTitle;
+    ch.translatedTitle = cleanChapterTitle(translatedTitle, chapterNumber);
     ch.translatedContent = translatedContent;
     ch.translationStatus = 'translated';
     ch.translatedAt = new Date().toISOString();

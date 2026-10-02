@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import { TranslationGenre } from '@/types/novel';
+import { cleanChapterTitle } from './chapter-utils';
 
 export const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
@@ -104,12 +105,12 @@ ${content}`;
     const outputText = response.text || '';
 
     // Parse the structured format
-    let translatedTitle = title;
+    let translatedTitle = cleanChapterTitle(title);
     let translatedContent = outputText;
 
     const titleMatch = outputText.match(/===TITLE_START===([\s\S]*?)===TITLE_END===/);
     if (titleMatch && titleMatch[1]) {
-      translatedTitle = titleMatch[1].trim();
+      translatedTitle = cleanChapterTitle(titleMatch[1].trim());
     }
 
     const contentMatch = outputText.match(/===CONTENT_START===([\s\S]*?)===CONTENT_END===/);

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Novel, Chapter } from '@/types/novel';
+import { cleanChapterTitle, formatChapterDisplayTitle } from '@/lib/chapter-utils';
 import { 
   X, ChevronLeft, ChevronRight, BookOpen, Settings, List, 
   Sun, Moon, Compass, Sparkles, Sliders
@@ -200,7 +201,7 @@ export default function ReaderModal({
             <div className="truncate">
               <h2 className="text-xs font-bold truncate opacity-80">{novel.title}</h2>
               <div className="text-sm font-extrabold truncate">
-                Chương {currentChapterNumber}: {currentChapter?.translatedTitle || currentChapter?.title || 'Đang tải...'}
+                {formatChapterDisplayTitle(currentChapterNumber, currentChapter?.title, currentChapter?.translatedTitle)}
               </div>
             </div>
           </div>
@@ -320,11 +321,11 @@ export default function ReaderModal({
             {novel.title}
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-4">
-            {currentChapter?.translatedTitle || currentChapter?.title || `Chương ${currentChapterNumber}`}
+            {formatChapterDisplayTitle(currentChapterNumber, currentChapter?.title, currentChapter?.translatedTitle)}
           </h1>
           {currentChapter?.translatedTitle && (
             <div className="text-xs opacity-60 italic">
-              Tiêu đề gốc: {currentChapter.title}
+              Tiêu đề gốc: {cleanChapterTitle(currentChapter.title, currentChapterNumber)}
             </div>
           )}
           <div className="mt-4 flex items-center justify-center gap-3 text-xs opacity-60">
@@ -400,7 +401,7 @@ export default function ReaderModal({
                       : 'hover:bg-black/5 dark:hover:bg-white/5 opacity-80'
                   }`}
                 >
-                  Chương {ch.chapterNumber}: {ch.translatedTitle || ch.title}
+                  {formatChapterDisplayTitle(ch.chapterNumber, ch.title, ch.translatedTitle)}
                 </button>
               ))}
             </div>

@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
 import { Novel, Chapter } from '@/types/novel';
+import { formatChapterDisplayTitle } from './chapter-utils';
 
 export interface EpubOptions {
   novel: Novel;
@@ -276,7 +277,11 @@ p {
 
   validChapters.forEach((ch, idx) => {
     const chapNum = idx + 1;
-    const chapTitle = (contentType === 'original' ? ch.title : (ch.translatedTitle || ch.title)) || `Chương ${chapNum}`;
+    const chapTitle = formatChapterDisplayTitle(
+      chapNum,
+      ch.title,
+      contentType === 'original' ? undefined : ch.translatedTitle
+    );
     
     let bodyContent = '';
     if (contentType === 'original') {
@@ -332,7 +337,11 @@ p {
     <ol>
       <li><a href="info.xhtml">Thông tin tác phẩm</a></li>
       ${validChapters.map((ch, idx) => {
-        const chapTitle = (contentType === 'original' ? ch.title : (ch.translatedTitle || ch.title)) || `Chương ${idx + 1}`;
+        const chapTitle = formatChapterDisplayTitle(
+          idx + 1,
+          ch.title,
+          contentType === 'original' ? undefined : ch.translatedTitle
+        );
         return `<li><a href="chapter_${idx + 1}.xhtml">${escapeXml(chapTitle)}</a></li>`;
       }).join('\n      ')}
     </ol>
@@ -362,7 +371,11 @@ p {
       <content src="info.xhtml"/>
     </navPoint>
     ${validChapters.map((ch, idx) => {
-      const chapTitle = (contentType === 'original' ? ch.title : (ch.translatedTitle || ch.title)) || `Chương ${idx + 1}`;
+      const chapTitle = formatChapterDisplayTitle(
+        idx + 1,
+        ch.title,
+        contentType === 'original' ? undefined : ch.translatedTitle
+      );
       return `<navPoint id="navPoint-${idx + 2}" playOrder="${idx + 2}">
       <navLabel><text>${escapeXml(chapTitle)}</text></navLabel>
       <content src="chapter_${idx + 1}.xhtml"/>

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Novel, Chapter, TranslationGenre } from '@/types/novel';
+import { cleanChapterTitle, formatChapterDisplayTitle } from '@/lib/chapter-utils';
 import { 
   Sparkles, BookOpen, CheckCircle2, Clock, AlertCircle, RefreshCw, 
   Save, Play, Sliders, Plus, Trash2, Edit3, Eye, FileText
@@ -137,13 +138,15 @@ export default function TranslationView({
     if (!activeNovel || !inspectingChapter) return;
     setIsSavingEdit(true);
 
+    const cleanedTranslatedTitle = cleanChapterTitle(editedTitle.trim(), inspectingChapter.chapterNumber);
+
     try {
       const res = await fetch(`/api/novels/${activeNovel.id}/chapters`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify([{
           ...inspectingChapter,
-          translatedTitle: editedTitle.trim(),
+          translatedTitle: cleanedTranslatedTitle,
           translatedContent: editedContent.trim(),
           translationStatus: 'translated',
           translatedAt: new Date().toISOString(),
@@ -157,7 +160,7 @@ export default function TranslationView({
         // Update local state
         const updated = {
           ...inspectingChapter,
-          translatedTitle: editedTitle.trim(),
+          translatedTitle: cleanedTranslatedTitle,
           translatedContent: editedContent.trim(),
           translationStatus: 'translated' as const,
         };
@@ -188,8 +191,9 @@ export default function TranslationView({
       if (!ch) continue;
 
       setTranslatingChapterNumber(chapNum);
+      const displayTitle = formatChapterDisplayTitle(chapNum, ch.title);
       setTranslateLogs(prev => [
-        `Đang dịch Chương ${chapNum}: ${ch.title}...`,
+        `Đang dịch ${displayTitle}...`,
         ...prev.slice(0, 30),
       ]);
 
@@ -212,9 +216,11 @@ export default function TranslationView({
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Lỗi dịch thuật');
 
+        const cleanedTranslatedTitle = cleanChapterTitle(data.data.translatedTitle, chapNum);
+
         const updatedChapter: Chapter = {
           ...ch,
-          translatedTitle: data.data.translatedTitle,
+          translatedTitle: cleanedTranslatedTitle,
           translatedContent: data.data.translatedContent,
           translationStatus: 'translated',
           translatedAt: new Date().toISOString(),
@@ -230,8 +236,9 @@ export default function TranslationView({
           setEditedContent(updatedChapter.translatedContent || '');
         }
 
+        const translatedDisplay = formatChapterDisplayTitle(chapNum, cleanedTranslatedTitle);
         setTranslateLogs(prev => [
-          `✓ Dịch xong Chương ${chapNum}: "${data.data.translatedTitle}"`,
+          `✓ Dịch xong ${translatedDisplay}`,
           ...prev.slice(0, 30),
         ]);
       } catch (err: unknown) {
@@ -274,9 +281,11 @@ export default function TranslationView({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Lỗi dịch thuật');
 
+      const cleanedTranslatedTitle = cleanChapterTitle(data.data.translatedTitle, inspectingChapter.chapterNumber);
+
       const updatedChapter: Chapter = {
         ...inspectingChapter,
-        translatedTitle: data.data.translatedTitle,
+        translatedTitle: cleanedTranslatedTitle,
         translatedContent: data.data.translatedContent,
         translationStatus: 'translated',
         translatedAt: new Date().toISOString(),
@@ -522,11 +531,11 @@ export default function TranslationView({
                       />
                       <div className="truncate">
                         <div className="font-semibold truncate">
-                          Chương {ch.chapterNumber}: {ch.translatedTitle || ch.title}
+                          {formatChapterDisplayTitle(ch.chapterNumber, ch.title, ch.translatedTitle)}
                         </div>
                         {ch.translatedTitle && (
                           <div className="text-[10px] text-slate-500 truncate">
-                            Gốc: {ch.title}
+                            Gốc: {cleanChapterTitle(ch.title, ch.chapterNumber)}
                           </div>
                         )}
                       </div>
