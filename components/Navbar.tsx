@@ -12,6 +12,9 @@ interface NavbarProps {
   totalChapters: number;
   translatedChapters: number;
   onOpenNewCrawler: () => void;
+  isRealtimeConnected?: boolean;
+  realtimeProvider?: string;
+  onOpenSupabaseModal?: () => void;
 }
 
 export default function Navbar({
@@ -21,6 +24,9 @@ export default function Navbar({
   totalChapters,
   translatedChapters,
   onOpenNewCrawler,
+  isRealtimeConnected = true,
+  realtimeProvider = 'connected',
+  onOpenSupabaseModal,
 }: NavbarProps) {
   const tabs = [
     { id: 'library' as ActiveTab, label: 'Thư viện truyện', icon: BookMarked },
@@ -77,10 +83,26 @@ export default function Navbar({
         {/* Quick Stats & CTA */}
         <div className="flex items-center gap-3">
           <div className="hidden lg:flex items-center gap-4 text-xs text-slate-400 border-r border-slate-800 pr-4">
-            <div className="flex items-center gap-1.5 text-emerald-400 font-medium bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-lg text-[11px]" title="Đã kết nối và đồng bộ với Firebase Cloud Firestore">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span>Firebase Cloud</span>
-            </div>
+            <button
+              onClick={onOpenSupabaseModal}
+              className={`flex items-center gap-1.5 font-semibold px-2.5 py-1 rounded-lg text-[11px] transition-all hover:scale-105 active:scale-95 ${
+                realtimeProvider === 'supabase'
+                  ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 shadow-sm shadow-emerald-500/10'
+                  : isRealtimeConnected
+                  ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                  : 'bg-slate-800 border border-slate-700 text-slate-400'
+              }`}
+              title="Nhấp để xem hướng dẫn kết nối Supabase, mã SQL và CLI"
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${isRealtimeConnected ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+              <span>
+                {realtimeProvider === 'supabase'
+                  ? 'Supabase Realtime'
+                  : isRealtimeConnected
+                  ? 'Realtime Sync'
+                  : 'Supabase & CLI'}
+              </span>
+            </button>
             <div>
               <span className="text-slate-500">Truyện: </span>
               <span className="font-semibold text-slate-200">{novelsCount}</span>

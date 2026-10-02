@@ -4,6 +4,15 @@ import { Novel, Chapter } from '@/types/novel';
 import { db } from './firebase';
 import { collection, doc, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
 import { cleanChapterTitle, sanitizeChapter, sanitizeChapters } from './chapter-utils';
+import { realtimeHub } from './realtime-hub';
+import { 
+  isSupabaseConfigured, 
+  fetchSupabaseNovels, 
+  saveSupabaseNovel, 
+  deleteSupabaseNovel, 
+  fetchSupabaseChapters, 
+  saveSupabaseChapters 
+} from './supabase';
 
 // In-memory cache backed by filesystem and Firestore
 interface StorageState {
@@ -273,7 +282,11 @@ class ServerStorage {
             });
           }
           this.state = data;
-          this.hydrateFromFirestore();
+          if (isSupabaseConfigured()) {
+            this.hydrateFromSupabase();
+          } else {
+            this.hydrateFromFirestore();
+          }
           return;
         }
       }
@@ -291,8 +304,33 @@ class ServerStorage {
     });
     this.saveState();
 
-    // Hydrate from Firestore in background
-    this.hydrateFromFirestore();
+    // Hydrate from Supabase or Firestore in background
+    if (isSupabaseConfigured()) {
+      this.hydrateFromSupabase();
+    } else {
+      this.hydrateFromFirestore();
+    }
+  }
+
+  public async hydrateFromSupabase(): Promise<void> {
+    if (!isSupabaseConfigured() || this.isHydrating) return;
+    this.isHydrating = true;
+    try {
+      const novels = await fetchSupabaseNovels();
+      if (novels && novels.length > 0) {
+        novels.forEach(n => {
+          this.state.novels[n.id] = {
+            ...(this.state.novels[n.id] || {}),
+            ...n,
+          };
+        });
+        this.saveState();
+      }
+    } catch (err) {
+      console.warn('Supabase hydration note:', err);
+    } finally {
+      this.isHydrating = false;
+    }
   }
 
   public async hydrateFromFirestore(): Promise<void> {
@@ -383,6 +421,7 @@ class ServerStorage {
   }
 
   public saveNovel(novel: Novel): Novel {
+    const isNew = !this.state.novels[novel.id];
     const existing = this.state.novels[novel.id];
     const updated: Novel = {
       ...existing,
@@ -392,15 +431,30 @@ class ServerStorage {
     this.state.novels[novel.id] = updated;
     this.saveState();
 
-    // Persist to Firebase Firestore
-    this.saveNovelToFirestore(updated).catch(() => {});
+    // Broadcast real-time event immediately
+    if (isNew) {
+      realtimeHub.notifyNovelCreated(updated);
+    } else {
+      realtimeHub.notifyNovelUpdated(updated);
+    }
+
+    // Persist to Supabase if configured, otherwise fallback to Firebase Firestore
+    if (isSupabaseConfigured()) {
+      saveSupabaseNovel(updated).catch(e => console.warn('Supabase saveNovel warning:', e));
+    } else {
+      this.saveNovelToFirestore(updated).catch(() => {});
+    }
 
     return updated;
   }
 
   public async saveNovelAsync(novel: Novel): Promise<Novel> {
     const updated = this.saveNovel(novel);
-    await this.saveNovelToFirestore(updated);
+    if (isSupabaseConfigured()) {
+      await saveSupabaseNovel(updated);
+    } else {
+      await this.saveNovelToFirestore(updated);
+    }
     return updated;
   }
 
@@ -410,11 +464,17 @@ class ServerStorage {
       delete this.state.chapters[id];
       this.saveState();
 
-      // Delete from Firebase Firestore
-      const safeId = sanitizeFirestoreId(id);
-      deleteDoc(doc(db, 'novels', safeId)).catch(e => {
-        console.warn('Firestore deleteDoc novel warning:', e);
-      });
+      // Broadcast delete real-time event immediately
+      realtimeHub.notifyNovelDeleted(id);
+
+      if (isSupabaseConfigured()) {
+        deleteSupabaseNovel(id).catch(e => console.warn('Supabase deleteNovel warning:', e));
+      } else {
+        const safeId = sanitizeFirestoreId(id);
+        deleteDoc(doc(db, 'novels', safeId)).catch(e => {
+          console.warn('Firestore deleteDoc novel warning:', e);
+        });
+      }
       return true;
     }
     return false;
@@ -423,11 +483,19 @@ class ServerStorage {
   public async deleteNovelAsync(id: string): Promise<boolean> {
     const ok = this.deleteNovel(id);
     if (ok) {
-      try {
-        const safeId = sanitizeFirestoreId(id);
-        await deleteDoc(doc(db, 'novels', safeId));
-      } catch (e) {
-        console.warn('Firestore deleteDoc async error:', e);
+      if (isSupabaseConfigured()) {
+        try {
+          await deleteSupabaseNovel(id);
+        } catch (e) {
+          console.warn('Supabase deleteNovelAsync error:', e);
+        }
+      } else {
+        try {
+          const safeId = sanitizeFirestoreId(id);
+          await deleteDoc(doc(db, 'novels', safeId));
+        } catch (e) {
+          console.warn('Firestore deleteDoc async error:', e);
+        }
       }
     }
     return ok;
@@ -442,7 +510,21 @@ class ServerStorage {
     let list = this.getChapters(novelId);
     if (list.length > 0) return sanitizeChapters(list);
 
-    // Fallback: check Firestore subcollection
+    // Fallback 1: check Supabase
+    if (isSupabaseConfigured()) {
+      try {
+        const remote = await fetchSupabaseChapters(novelId);
+        if (remote && remote.length > 0) {
+          this.state.chapters[novelId] = remote;
+          this.saveState();
+          return remote;
+        }
+      } catch (e) {
+        console.warn('Supabase getChaptersAsync warning:', e);
+      }
+    }
+
+    // Fallback 2: check Firestore subcollection
     try {
       const safeNovelId = sanitizeFirestoreId(novelId);
       const snap = await getDocs(collection(db, 'novels', safeNovelId, 'chapters'));
@@ -515,15 +597,29 @@ class ServerStorage {
 
     this.saveState();
 
-    // Persist chapter to Firestore subcollection /novels/{novelId}/chapters/{chapterId}
-    this.saveChapterToFirestore(cleanChap).catch(() => {});
+    // Broadcast real-time chapter update and novel progress
+    realtimeHub.notifyChapterUpdated(cleanChap);
+    if (this.state.novels[cleanChap.novelId]) {
+      realtimeHub.notifyNovelUpdated(this.state.novels[cleanChap.novelId]);
+    }
+
+    // Persist to Supabase if configured, otherwise Firestore
+    if (isSupabaseConfigured()) {
+      saveSupabaseChapters([cleanChap]).catch(e => console.warn('Supabase saveChapter warning:', e));
+    } else {
+      this.saveChapterToFirestore(cleanChap).catch(() => {});
+    }
 
     return cleanChap;
   }
 
   public async saveChapterAsync(chapter: Chapter): Promise<Chapter> {
     const saved = this.saveChapter(chapter);
-    await this.saveChapterToFirestore(saved);
+    if (isSupabaseConfigured()) {
+      await saveSupabaseChapters([saved]);
+    } else {
+      await this.saveChapterToFirestore(saved);
+    }
     return saved;
   }
 
@@ -532,6 +628,17 @@ class ServerStorage {
     for (const ch of cleanList) {
       this.saveChapter(ch);
     }
+    if (cleanList.length > 0) {
+      const novelId = cleanList[0].novelId;
+      const maxChapNum = Math.max(...cleanList.map(c => c.chapterNumber));
+      realtimeHub.notifyChaptersAdded(novelId, cleanList.length, maxChapNum);
+      if (this.state.novels[novelId]) {
+        realtimeHub.notifyNovelUpdated(this.state.novels[novelId]);
+      }
+    }
+    if (isSupabaseConfigured()) {
+      saveSupabaseChapters(cleanList).catch(e => console.warn('Supabase saveChapters warning:', e));
+    }
   }
 
   public async saveChaptersAsync(chapters: Chapter[]): Promise<void> {
@@ -539,11 +646,23 @@ class ServerStorage {
     for (const ch of cleanList) {
       this.saveChapter(ch);
     }
-    // Batch save to Firestore in chunks of 5
-    const CHUNK_SIZE = 5;
-    for (let i = 0; i < cleanList.length; i += CHUNK_SIZE) {
-      const chunk = cleanList.slice(i, i + CHUNK_SIZE);
-      await Promise.allSettled(chunk.map(ch => this.saveChapterToFirestore(ch)));
+    if (cleanList.length > 0) {
+      const novelId = cleanList[0].novelId;
+      const maxChapNum = Math.max(...cleanList.map(c => c.chapterNumber));
+      realtimeHub.notifyChaptersAdded(novelId, cleanList.length, maxChapNum);
+      if (this.state.novels[novelId]) {
+        realtimeHub.notifyNovelUpdated(this.state.novels[novelId]);
+      }
+    }
+    if (isSupabaseConfigured()) {
+      await saveSupabaseChapters(cleanList);
+    } else {
+      // Batch save to Firestore in chunks of 5
+      const CHUNK_SIZE = 5;
+      for (let i = 0; i < cleanList.length; i += CHUNK_SIZE) {
+        const chunk = cleanList.slice(i, i + CHUNK_SIZE);
+        await Promise.allSettled(chunk.map(ch => this.saveChapterToFirestore(ch)));
+      }
     }
   }
 

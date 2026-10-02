@@ -5,8 +5,9 @@ import { Novel } from '@/types/novel';
 import { 
   Search, BookOpen, Download, Sparkles, SlidersHorizontal, 
   ExternalLink, Trash2, CheckCircle2, Clock, Globe, Copy, Check,
-  Layers, Plus, RefreshCw, Database
+  Layers, Plus, RefreshCw, Database, Terminal
 } from 'lucide-react';
+import SupabaseModal from './SupabaseModal';
 
 interface LibraryViewProps {
   novels: Novel[];
@@ -36,24 +37,19 @@ export default function LibraryView({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [showSupabaseModal, setShowSupabaseModal] = useState(false);
 
-  const handleSyncFirebase = async () => {
+  const handleRefreshSync = async () => {
     setIsSyncing(true);
     setSyncStatus(null);
     try {
-      const res = await fetch('/api/firebase/status', { method: 'POST' });
-      const data = await res.json();
-      if (res.ok) {
-        setSyncStatus(`✓ Đã đồng bộ ${data.count} truyện từ Firestore`);
-        if (onRefreshNovels) onRefreshNovels();
-      } else {
-        setSyncStatus('Lỗi đồng bộ');
-      }
+      if (onRefreshNovels) await onRefreshNovels();
+      setSyncStatus('✓ Đã đồng bộ & làm mới dữ liệu');
     } catch {
-      setSyncStatus('Lỗi kết nối Firebase');
+      setSyncStatus('Lỗi làm mới');
     } finally {
       setIsSyncing(false);
-      setTimeout(() => setSyncStatus(null), 3500);
+      setTimeout(() => setSyncStatus(null), 3000);
     }
   };
 
@@ -106,17 +102,26 @@ export default function LibraryView({
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Firebase Database Status Badge & Sync */}
+          {/* Supabase & CLI Button */}
           <button
-            onClick={handleSyncFirebase}
-            disabled={isSyncing}
-            className="flex items-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20 active:scale-95 disabled:opacity-50 transition-all"
-            title="Đồng bộ dữ liệu trực tiếp với Firebase Cloud Firestore"
+            onClick={() => setShowSupabaseModal(true)}
+            className="flex items-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-950/40 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-900/50 hover:border-emerald-500 active:scale-95 transition-all shadow-sm"
+            title="Mở hướng dẫn kết nối Supabase, mã SQL Schema và CLI Tool"
           >
-            <Database className="h-3.5 w-3.5 text-emerald-400" />
-            <span className="hidden sm:inline">Firebase:</span>
-            <span>{isSyncing ? 'Đang đồng bộ...' : 'Đã kết nối'}</span>
-            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+            <Terminal className="h-3.5 w-3.5 text-emerald-400" />
+            <span>Supabase & CLI</span>
+          </button>
+
+          {/* Refresh / Sync Button */}
+          <button
+            onClick={handleRefreshSync}
+            disabled={isSyncing}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-700/80 bg-slate-800/60 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 active:scale-95 disabled:opacity-50 transition-all"
+            title="Làm mới và đồng bộ dữ liệu tức thời"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 text-indigo-400 ${isSyncing ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">Làm mới</span>
+            <span>{isSyncing ? '...' : ''}</span>
           </button>
 
           <button
@@ -405,6 +410,10 @@ export default function LibraryView({
             );
           })}
         </div>
+      )}
+
+      {showSupabaseModal && (
+        <SupabaseModal onClose={() => setShowSupabaseModal(false)} />
       )}
     </div>
   );

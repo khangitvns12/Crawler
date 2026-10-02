@@ -10,13 +10,26 @@ import ApiDocsView from '@/components/ApiDocsView';
 import ReaderModal from '@/components/ReaderModal';
 import EpubExportModal from '@/components/EpubExportModal';
 import NovelDetailModal from '@/components/NovelDetailModal';
+import SupabaseModal from '@/components/SupabaseModal';
+import { useRealtimeNovels } from '@/hooks/useRealtimeNovels';
 import { motion, AnimatePresence } from 'motion/react';
-import { Compass, Sparkles, Download, Terminal, BookOpen, ChevronRight, ShieldCheck } from 'lucide-react';
+import { Compass, Sparkles, Download, Terminal, BookOpen, ChevronRight, ShieldCheck, Radio } from 'lucide-react';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('library');
-  const [novels, setNovels] = useState<Novel[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+
+  // Unified Realtime synchronization hook (Supabase Realtime + SSE + BroadcastChannel)
+  const {
+    novels,
+    setNovels,
+    isLoading,
+    isRealtimeConnected,
+    realtimeProvider,
+    lastEvent,
+    refreshNovels,
+    deleteNovel,
+    addOrUpdateNovel,
+  } = useRealtimeNovels();
 
   // Modals state
   const [readingNovel, setReadingNovel] = useState<Novel | null>(null);
@@ -25,24 +38,7 @@ export default function Home() {
   const [detailNovel, setDetailNovel] = useState<Novel | null>(null);
   const [selectedTranslateNovelId, setSelectedTranslateNovelId] = useState<string | undefined>(undefined);
   const [resumeNovel, setResumeNovel] = useState<Novel | null>(null);
-
-  const fetchNovelsList = () => {
-    fetch('/api/novels')
-      .then(res => res.json())
-      .then(data => {
-        if (data.success && Array.isArray(data.data)) {
-          setNovels(data.data);
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        setIsLoading(false);
-      });
-  };
-
-  useEffect(() => {
-    fetchNovelsList();
-  }, []);
+  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
 
   // Compute metrics
   const totalChapters = novels.reduce((acc, n) => acc + (n.chaptersCount || 0), 0);
@@ -65,15 +61,7 @@ export default function Home() {
   };
 
   const handleNovelCrawled = (newNovel: Novel, chapters: Chapter[]) => {
-    setNovels(prev => {
-      const existingIdx = prev.findIndex(n => n.id === newNovel.id);
-      if (existingIdx >= 0) {
-        const copy = [...prev];
-        copy[existingIdx] = newNovel;
-        return copy;
-      }
-      return [newNovel, ...prev];
-    });
+    addOrUpdateNovel(newNovel);
   };
 
   const handleChapterTranslated = (novelId: string, updatedChapter: Chapter) => {
@@ -104,12 +92,7 @@ export default function Home() {
   };
 
   const handleDeleteNovel = async (id: string) => {
-    try {
-      await fetch(`/api/novels/${id}`, { method: 'DELETE' });
-      setNovels(prev => prev.filter(n => n.id !== id));
-    } catch {
-      // Fallback
-    }
+    await deleteNovel(id);
   };
 
   return (
@@ -122,7 +105,28 @@ export default function Home() {
         totalChapters={totalChapters}
         translatedChapters={totalTranslated}
         onOpenNewCrawler={() => setActiveTab('crawler')}
+        isRealtimeConnected={isRealtimeConnected}
+        realtimeProvider={realtimeProvider}
+        onOpenSupabaseModal={() => setIsSupabaseModalOpen(true)}
       />
+
+      {/* Realtime Live Event Toast */}
+      <AnimatePresence>
+        {lastEvent && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className="fixed top-16 right-4 z-50 flex items-center gap-2.5 rounded-xl bg-slate-900/95 border border-emerald-500/40 px-3.5 py-2 text-xs font-semibold text-emerald-300 shadow-xl shadow-emerald-500/10 backdrop-blur-md"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span>{lastEvent}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Hero Banner for first-time or contextual presence */}
       {activeTab === 'library' && novels.length > 0 && (
@@ -189,7 +193,7 @@ export default function Home() {
                   setActiveTab('crawler');
                 }}
                 onDeleteNovel={handleDeleteNovel}
-                onRefreshNovels={fetchNovelsList}
+                onRefreshNovels={refreshNovels}
               />
             </motion.div>
           )}
@@ -300,6 +304,11 @@ export default function Home() {
           onOpenEpub={n => setExportingEpubNovel(n)}
           onDeleteNovel={handleDeleteNovel}
         />
+      )}
+
+      {/* 4. Supabase Connection & CLI Modal */}
+      {isSupabaseModalOpen && (
+        <SupabaseModal onClose={() => setIsSupabaseModalOpen(false)} />
       )}
     </div>
   );
