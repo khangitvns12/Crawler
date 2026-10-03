@@ -14,7 +14,12 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'Dữ liệu yêu cầu không phải định dạng JSON hợp lệ' }, { status: 400 });
+    }
     const novelData = body as Partial<Novel>;
 
     if (!novelData.title || typeof novelData.title !== 'string') {

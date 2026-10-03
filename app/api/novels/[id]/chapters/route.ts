@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { serverStorage } from '@/lib/server-storage';
-import { Chapter } from '@/types/novel';
+import { Chapter, Novel } from '@/types/novel';
 import { cleanChapterTitle, cleanChapterContent, sanitizeChapters, sortChapters } from '@/lib/chapter-utils';
+import { isSupabaseConfigured } from '@/lib/supabase';
 
 export async function GET(
   req: NextRequest,
@@ -23,10 +24,33 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    const body = await req.json();
-    const chapters = Array.isArray(body) ? body : [body];
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'Dữ liệu yêu cầu không phải định dạng JSON hợp lệ' }, { status: 400 });
+    }
 
-    const processedChapters: Chapter[] = chapters.map((ch: Partial<Chapter>, index: number) => {
+    let rawChapters: Array<Partial<Chapter>> = [];
+    let novelFallback: Novel | undefined;
+
+    if (Array.isArray(body)) {
+      rawChapters = body;
+    } else if (body && typeof body === 'object') {
+      if (body.chapter) {
+        rawChapters = [body.chapter];
+      } else if (Array.isArray(body.chapters)) {
+        rawChapters = body.chapters;
+      } else {
+        rawChapters = [body];
+      }
+
+      if (body.novel && typeof body.novel === 'object') {
+        novelFallback = body.novel as Novel;
+      }
+    }
+
+    const processedChapters: Chapter[] = rawChapters.map((ch: Partial<Chapter>, index: number) => {
       const chapterNumber = ch.chapterNumber ?? index + 1;
       const rawTitle = ch.title || `Chương ${chapterNumber}`;
       const cleanedTitle = cleanChapterTitle(rawTitle, chapterNumber) || `Chương ${chapterNumber}`;
@@ -38,7 +62,7 @@ export async function POST(
       const transCleaned = ch.translatedContent ? cleanChapterContent(ch.translatedContent) : undefined;
 
       return {
-        id: ch.id || `chap-${id}-${chapterNumber}-${Date.now()}`,
+        id: ch.id || `chap-${id}-${chapterNumber}`,
         novelId: id,
         chapterNumber,
         title: cleanedTitle,
@@ -57,10 +81,16 @@ export async function POST(
     // Automatically sort chapters strictly in order
     processedChapters.sort((a, b) => a.chapterNumber - b.chapterNumber);
 
-    await serverStorage.saveChaptersAsync(processedChapters);
-    return NextResponse.json({ success: true, count: processedChapters.length });
+    await serverStorage.saveChaptersAsync(processedChapters, novelFallback);
+    return NextResponse.json({
+      success: true,
+      count: processedChapters.length,
+      novelId: id,
+      supabaseConfigured: isSupabaseConfigured(),
+    });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+

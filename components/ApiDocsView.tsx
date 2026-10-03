@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { Novel } from '@/types/novel';
+import { safeFetchJson } from '@/lib/safe-json';
 import { 
   Terminal, Globe, Copy, Check, ExternalLink, Play, 
   Code2, Download, Upload, ShieldCheck, Smartphone, BookOpen,
@@ -42,10 +43,13 @@ export default function ApiDocsView({ novels, onImportNovels }: ApiDocsViewProps
 
     const targetUrl = selectedEndpoint.replace('{id}', sampleNovelId).replace('{chapterNum}', '1');
     try {
-      const res = await fetch(targetUrl);
-      setTestStatusCode(res.status);
-      const data = await res.json();
-      setTestResponse(data);
+      const { ok, status, data, rawText, error } = await safeFetchJson<any>(targetUrl);
+      setTestStatusCode(status);
+      if (data !== undefined) {
+        setTestResponse(data);
+      } else {
+        setTestResponse({ status, error, responseBodyPreview: rawText?.slice(0, 500) });
+      }
     } catch (err: unknown) {
       setTestResponse({ error: err instanceof Error ? err.message : String(err) });
     } finally {

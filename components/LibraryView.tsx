@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { Novel } from '@/types/novel';
+import { safeFetchJson } from '@/lib/safe-json';
 import { 
   Search, BookOpen, Download, Sparkles, SlidersHorizontal, 
   ExternalLink, Trash2, CheckCircle2, Clock, Globe, Copy, Check,
@@ -43,13 +44,12 @@ export default function LibraryView({
     setIsSyncing(true);
     setSyncStatus(null);
     try {
-      const res = await fetch('/api/supabase/sync', { method: 'POST' });
-      const data = await res.json();
-      if (res.ok && data.success) {
+      const { ok, data, error } = await safeFetchJson<any>('/api/supabase/sync', { method: 'POST' });
+      if (ok && data?.success) {
         setSyncStatus(`✓ ${data.message || 'Đã đồng bộ thành công với Supabase'}`);
         if (onRefreshNovels) await onRefreshNovels();
       } else {
-        setSyncStatus(data.message || 'Chưa cấu hình Supabase (.env)');
+        setSyncStatus(error || data?.message || 'Chưa cấu hình Supabase (.env)');
         if (onRefreshNovels) await onRefreshNovels();
       }
     } catch {

@@ -11,6 +11,7 @@ import ReaderModal from '@/components/ReaderModal';
 import EpubExportModal from '@/components/EpubExportModal';
 import NovelDetailModal from '@/components/NovelDetailModal';
 import SupabaseModal from '@/components/SupabaseModal';
+import { safeFetchJson } from '@/lib/safe-json';
 import { motion, AnimatePresence } from 'motion/react';
 import { Compass, Sparkles, Download, Terminal, BookOpen, ChevronRight, ShieldCheck, CheckCircle2 } from 'lucide-react';
 
@@ -39,9 +40,8 @@ export default function Home() {
 
   const fetchNovelsList = async () => {
     try {
-      const res = await fetch('/api/novels');
-      const data = await res.json();
-      if (data.success && Array.isArray(data.data)) {
+      const { ok, data } = await safeFetchJson<any>('/api/novels');
+      if (ok && data?.success && Array.isArray(data.data)) {
         setNovels(data.data);
       }
     } catch {
@@ -57,14 +57,13 @@ export default function Home() {
   const syncWithSupabase = async (isInitial = false) => {
     setIsSyncing(true);
     try {
-      const res = await fetch('/api/supabase/sync', { method: 'POST' });
-      const data = await res.json();
-      if (data.success && Array.isArray(data.data)) {
+      const { ok, data } = await safeFetchJson<any>('/api/supabase/sync', { method: 'POST' });
+      if (ok && data?.success && Array.isArray(data.data)) {
         setNovels(data.data);
         if (data.configured) {
           showToast(`✓ ${data.message || 'Đã tự động đồng bộ dữ liệu với Supabase'}`);
         }
-      } else if (!isInitial && data.message) {
+      } else if (!isInitial && data?.message) {
         showToast(data.message);
       }
     } catch (err) {
@@ -80,9 +79,8 @@ export default function Home() {
 
     const loadAndSync = async () => {
       try {
-        const res = await fetch('/api/novels');
-        const data = await res.json();
-        if (!ignore && data.success && Array.isArray(data.data)) {
+        const { ok, data } = await safeFetchJson<any>('/api/novels');
+        if (!ignore && ok && data?.success && Array.isArray(data.data)) {
           setNovels(data.data);
         }
       } catch {
@@ -93,9 +91,8 @@ export default function Home() {
 
       // Automatically sync with Supabase in background
       try {
-        const syncRes = await fetch('/api/supabase/sync', { method: 'POST' });
-        const syncData = await syncRes.json();
-        if (!ignore && syncData.success && Array.isArray(syncData.data)) {
+        const { ok: syncOk, data: syncData } = await safeFetchJson<any>('/api/supabase/sync', { method: 'POST' });
+        if (!ignore && syncOk && syncData?.success && Array.isArray(syncData.data)) {
           setNovels(syncData.data);
           if (syncData.configured) {
             setSyncToast(`✓ ${syncData.message || 'Đã tự động đồng bộ dữ liệu với Supabase'}`);

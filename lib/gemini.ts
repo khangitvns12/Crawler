@@ -133,3 +133,117 @@ ${content}`;
     throw new Error(`Lỗi dịch thuật Gemini: ${msg}`);
   }
 }
+
+export interface NovelMetadataTranslationOptions {
+  title: string;
+  description?: string;
+  author?: string;
+  sourceLang?: string;
+  targetLang?: string;
+  genre?: TranslationGenre;
+  glossary?: Record<string, string>;
+  modelName?: string;
+}
+
+export interface NovelMetadataTranslationResult {
+  translatedTitle: string;
+  translatedDescription?: string;
+  translatedAuthor?: string;
+}
+
+/**
+ * Translate novel title, author, and description using Gemini API
+ */
+export async function translateNovelMetadata(
+  options: NovelMetadataTranslationOptions
+): Promise<NovelMetadataTranslationResult> {
+  const {
+    title,
+    description = '',
+    author = '',
+    sourceLang = 'Tự động nhận diện',
+    targetLang = 'Tiếng Việt',
+    genre = 'xianxia',
+    glossary = {},
+    modelName = 'gemini-3.8-flash',
+  } = options;
+
+  let glossaryInstruction = '';
+  const glossaryEntries = Object.entries(glossary);
+  if (glossaryEntries.length > 0) {
+    glossaryInstruction = `
+[BẢNG TỪ ĐIỂN THUẬT NGỮ BẮT BUỘC TUÂN THỦ]:
+${glossaryEntries.map(([k, v]) => `- "${k}" => "${v}"`).join('\n')}
+`;
+  }
+
+  const systemInstruction = `Bạn là một dịch giả tiểu thuyết văn học cao cấp, chuyên dịch tiêu đề tác phẩm, tên tác giả và văn án giới thiệu từ [${sourceLang}] sang [${targetLang}].
+${GENRE_PROMPTS[genre] || GENRE_PROMPTS.general}
+${glossaryInstruction}
+
+QUY TẮC CỐT LÕI:
+1. Dịch TÊN TRUYỆN: Chuyển ngữ chuẩn xác, thanh thoát, cuốn hút độc giả. Với truyện tiếng Trung, dùng âm Hán-Việt chuẩn mực (ví dụ: 万古第一神 -> Vạn Cổ Đệ Nhất Thần, 斗破苍穹 -> Đấu Phá Thương Khung, 剑来 -> Kiếm Lai). Tuyệt đối không dịch thô ngữ nghĩa từng chữ.
+2. Dịch TÊN TÁC GIẢ: Dùng âm Hán-Việt nếu là tiếng Trung, hoặc giữ nguyên/phiên âm quốc tế.
+3. Dịch MÔ TẢ/VĂN ÁN: Dịch mượt mà, lưu loát, truyền tải trọn vẹn sức hấp dẫn của cốt truyện.
+4. Trả về đúng định dạng chuẩn để bóc tách:
+===TITLE_START===
+[Tên truyện đã dịch sang tiếng Việt]
+===TITLE_END===
+===AUTHOR_START===
+[Tên tác giả đã dịch sang tiếng Việt]
+===AUTHOR_END===
+===DESC_START===
+[Mô tả truyện đã dịch sang tiếng Việt]
+===DESC_END===`;
+
+  const userPrompt = `Hãy dịch thông tin bộ truyện sau sang [${targetLang}]:
+TÊN TRUYỆN GỐC: ${title}
+${author ? `TÁC GIẢ GỐC: ${author}` : ''}
+${description ? `MÔ TẢ GỐC:\n${description}` : ''}`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: modelName,
+      contents: userPrompt,
+      config: {
+        systemInstruction,
+        temperature: 0.3,
+      },
+    });
+
+    const outputText = response.text || '';
+    let translatedTitle = title;
+    let translatedAuthor = author;
+    let translatedDescription = description;
+
+    const titleMatch = outputText.match(/===TITLE_START===([\s\S]*?)===TITLE_END===/);
+    if (titleMatch && titleMatch[1]) {
+      translatedTitle = titleMatch[1].trim();
+    } else {
+      // Fallback: extract title from line if format was not strictly respected
+      const lines = outputText.split('\n').map(l => l.trim()).filter(Boolean);
+      if (lines.length > 0 && lines[0].length < 200) {
+        translatedTitle = lines[0].replace(/^#+\s*/, '').replace(/^[*\s]+|[*\s]+$/g, '').trim();
+      }
+    }
+
+    const authorMatch = outputText.match(/===AUTHOR_START===([\s\S]*?)===AUTHOR_END===/);
+    if (authorMatch && authorMatch[1]) {
+      translatedAuthor = authorMatch[1].trim();
+    }
+
+    const descMatch = outputText.match(/===DESC_START===([\s\S]*?)===DESC_END===/);
+    if (descMatch && descMatch[1]) {
+      translatedDescription = descMatch[1].trim();
+    }
+
+    return {
+      translatedTitle,
+      translatedAuthor,
+      translatedDescription,
+    };
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    throw new Error(`Lỗi dịch thông tin truyện Gemini: ${msg}`);
+  }
+}

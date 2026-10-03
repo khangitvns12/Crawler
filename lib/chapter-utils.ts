@@ -172,6 +172,9 @@ export function stripSourceWatermarks(content?: string | null): string {
     /^\s*(?:求推荐票|求月票|求打赏|求订阅|求鲜花|求收藏|求自订).*$/i,
     /^\s*(?:本章未完|点击下一页继续阅读).*$/i,
     /^\s*（?本章完）?\s*$/i,
+    /^\s*loadAdv\s*\(\s*\d+\s*,\s*\d+\s*\)\s*;?\s*$/i,
+    /^\s*(?:\d{4}[-/]\d{2}[-/]\d{2}\s+)?作者\s*[:：]\s*.+$/i,
+    /^\s*小说关键词\s*[:：].*$/i,
     
     // Japanese watermarks
     /^\s*(?:※この作品は|転載禁止|小説家になろう|カクヨム).*$/i,
@@ -272,4 +275,101 @@ export function sanitizeChapters(chapters: Chapter[]): Chapter[] {
   if (!Array.isArray(chapters)) return [];
   const sanitized = chapters.map(sanitizeChapter);
   return sortChapters(sanitized);
+}
+
+/**
+ * Parses Chinese numerals (e.g. "一千二百三十四" -> 1234, "五百六十八" -> 568)
+ */
+export function parseChineseNumber(str: string): number {
+  if (!str) return 0;
+  if (/^\d+$/.test(str)) return parseInt(str, 10);
+
+  const digitMap: Record<string, number> = {
+    '零': 0, '〇': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4,
+    '五': 5, '六': 6, '七': 7, '八': 8, '九': 9,
+  };
+
+  let total = 0;
+  let section = 0;
+  let currentDigit = 0;
+
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+    if (digitMap[char] !== undefined) {
+      currentDigit = digitMap[char];
+      if (i === str.length - 1) {
+        section += currentDigit;
+      }
+    } else if (char === '十') {
+      section += (currentDigit === 0 ? 1 : currentDigit) * 10;
+      currentDigit = 0;
+    } else if (char === '百') {
+      section += (currentDigit === 0 ? 1 : currentDigit) * 100;
+      currentDigit = 0;
+    } else if (char === '千') {
+      section += (currentDigit === 0 ? 1 : currentDigit) * 1000;
+      currentDigit = 0;
+    } else if (char === '万') {
+      section += currentDigit;
+      total += section * 10000;
+      section = 0;
+      currentDigit = 0;
+    } else if (char === '亿') {
+      section += currentDigit;
+      total += section * 100000000;
+      section = 0;
+      currentDigit = 0;
+    }
+  }
+
+  total += section;
+  return total;
+}
+
+/**
+ * Extracts numeric chapter number from a chapter title (Vietnamese, Chinese, English, or raw number)
+ * e.g. "第568章 566：任意门" -> 568
+ * e.g. "Chương 45: Đại Đạo" -> 45
+ * e.g. "Chapter 123" -> 123
+ * e.g. "第一千二百三十四章" -> 1234
+ */
+export function parseChapterNumber(title: string): number | null {
+  if (!title || typeof title !== 'string') return null;
+
+  // 1. Chinese style with Arabic digits: 第568章, 第 568 回, 第568节
+  const zhArabic = title.match(/第\s*(\d+)\s*[章話话回節节]/);
+  if (zhArabic) {
+    const num = parseInt(zhArabic[1], 10);
+    if (!isNaN(num) && num > 0) return num;
+  }
+
+  // 2. Vietnamese / English style: Chương 123, Chapter 123, Chap 123, Hồi 123
+  const vnMatch = title.match(/(?:chương|chuong|chap|chapter|hồi|hoi|tập|tap)\s*0*(\d+)/i);
+  if (vnMatch) {
+    const num = parseInt(vnMatch[1], 10);
+    if (!isNaN(num) && num > 0) return num;
+  }
+
+  // 3. Chinese numerals: 第一千二百三十四章, 第五百六十八回
+  const zhNumMatch = title.match(/第\s*([零〇一二两三四五六七八九十百千万\d]+)\s*[章話话回節节]/);
+  if (zhNumMatch) {
+    const parsed = parseChineseNumber(zhNumMatch[1]);
+    if (parsed > 0) return parsed;
+  }
+
+  // 4. Starting with number: "568: 任意门" or "568. Khởi đầu" or "568 - "
+  const startNum = title.match(/^0*(\d+)[\s:：\.\-–—]/);
+  if (startNum) {
+    const num = parseInt(startNum[1], 10);
+    if (!isNaN(num) && num > 0) return num;
+  }
+
+  // 5. Fallback: any standalone number in the title
+  const anyNum = title.match(/\b(\d+)\b/);
+  if (anyNum) {
+    const num = parseInt(anyNum[1], 10);
+    if (!isNaN(num) && num > 0) return num;
+  }
+
+  return null;
 }

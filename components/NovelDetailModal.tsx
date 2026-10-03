@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Novel, Chapter } from '@/types/novel';
 import { cleanChapterTitle, formatChapterDisplayTitle } from '@/lib/chapter-utils';
+import { safeFetchJson } from '@/lib/safe-json';
 import { 
   X, BookOpen, Download, Sparkles, Trash2, Edit3, 
   CheckCircle2, Clock, Save, RefreshCw, ExternalLink
@@ -49,7 +50,7 @@ export default function NovelDetailModal({
     setIsCheckingUpdate(true);
     setUpdateResult(null);
     try {
-      const res = await fetch('/api/crawler/inspect', {
+      const { ok, data } = await safeFetchJson<any>('/api/crawler/inspect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -60,8 +61,7 @@ export default function NovelDetailModal({
           maxPages: 150,
         }),
       });
-      const data = await res.json();
-      if (res.ok && data.data && Array.isArray(data.data.chapters)) {
+      if (ok && data?.data && Array.isArray(data.data.chapters)) {
         const webCount = data.data.chapters.length;
         const currentCount = novel.chaptersCount || chapters.length || 0;
         const diff = Math.max(0, webCount - currentCount);
@@ -76,10 +76,9 @@ export default function NovelDetailModal({
 
   useEffect(() => {
     let active = true;
-    fetch(`/api/novels/${novel.id}/chapters`)
-      .then(res => res.json())
-      .then(data => {
-        if (active && data.success && Array.isArray(data.data)) {
+    safeFetchJson<any>(`/api/novels/${novel.id}/chapters`)
+      .then(({ ok, data }) => {
+        if (active && ok && data?.success && Array.isArray(data.data)) {
           const sorted = [...data.data].sort((a, b) => a.chapterNumber - b.chapterNumber);
           setChapters(sorted);
         }
@@ -97,7 +96,7 @@ export default function NovelDetailModal({
   const handleSaveMetadata = async () => {
     setIsSaving(true);
     try {
-      const res = await fetch(`/api/novels/${novel.id}`, {
+      const { ok, data } = await safeFetchJson<any>(`/api/novels/${novel.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -108,8 +107,7 @@ export default function NovelDetailModal({
         }),
       });
 
-      const data = await res.json();
-      if (res.ok) {
+      if (ok && data?.data) {
         onUpdateNovel(data.data);
         setIsEditingMeta(false);
       }

@@ -1,13 +1,14 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Novel, Chapter, CookieConfig, CrawlerConfig } from '@/types/novel';
+import { Novel, Chapter, CookieConfig, CrawlerConfig, TranslationGenre } from '@/types/novel';
 import { SITE_PRESETS, findPresetForUrl } from '@/lib/preset-extractors';
 import { cleanChapterTitle, cleanChapterContent, formatChapterDisplayTitle, sortChapters } from '@/lib/chapter-utils';
+import { safeFetchJson } from '@/lib/safe-json';
 import { 
   Compass, ShieldCheck, Key, RefreshCw, AlertCircle, Play, 
   Pause, CheckCircle2, ChevronDown, ChevronUp, Globe, FileText,
-  Sliders, ArrowRight, Sparkles, ExternalLink
+  Sliders, ArrowRight, Sparkles, ExternalLink, Languages
 } from 'lucide-react';
 
 interface CrawlerViewProps {
@@ -69,6 +70,21 @@ export default function CrawlerView({
   const [crawlLogs, setCrawlLogs] = useState<Array<{ text: string; type: 'info' | 'success' | 'error' }>>([]);
   const [crawledNovelResult, setCrawledNovelResult] = useState<Novel | null>(null);
 
+  // Auto-translate during crawl
+  const [autoTranslateOnCrawl, setAutoTranslateOnCrawl] = useState(true);
+  const [translateNovelTitle, setTranslateNovelTitle] = useState(true);
+  const [translationGenre, setTranslationGenre] = useState<TranslationGenre>(() =>
+    (resumeNovel?.translationGenre as TranslationGenre) || 'xianxia'
+  );
+  const [aiModel, setAiModel] = useState('gemini-3.8-flash');
+  const [isTranslatingMetadata, setIsTranslatingMetadata] = useState(false);
+  const [translatedMetadata, setTranslatedMetadata] = useState<{
+    originalTitle?: string;
+    translatedTitle?: string;
+    translatedAuthor?: string;
+    translatedDescription?: string;
+  } | null>(null);
+
   // Handle URL change & Preset Detection
   const handleUrlChange = (newUrl: string) => {
     setUrl(newUrl);
@@ -88,7 +104,7 @@ export default function CrawlerView({
     setCookieTestResult(null);
 
     try {
-      const res = await fetch('/api/crawler/test-cookie', {
+      const { ok, data, error } = await safeFetchJson<any>('/api/crawler/test-cookie', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -101,8 +117,7 @@ export default function CrawlerView({
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Lỗi kiểm tra cookie');
+      if (!ok) throw new Error(error || data?.error || 'Lỗi kiểm tra cookie');
       setCookieTestResult(data);
     } catch (err: unknown) {
       setCookieTestError(err instanceof Error ? err.message : String(err));
@@ -131,7 +146,7 @@ export default function CrawlerView({
     };
 
     try {
-      const res = await fetch('/api/crawler/inspect', {
+      const { ok, data, error } = await safeFetchJson<any>('/api/crawler/inspect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -143,10 +158,21 @@ export default function CrawlerView({
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Không thể trích xuất thông tin truyện');
+      if (!ok || !data?.data) throw new Error(error || data?.error || 'Không thể trích xuất thông tin truyện');
 
       setInspectedNovel(data.data);
+      setTranslatedMetadata(null);
+
+      // Auto-detect recommended genre based on domain
+      const checkUrl = url.trim().toLowerCase();
+      if (checkUrl.includes('syosetu') || checkUrl.includes('kakuyomu')) {
+        setTranslationGenre('lightnovel');
+      } else if (checkUrl.includes('novelfull') || checkUrl.includes('royalroad')) {
+        setTranslationGenre('webnovel');
+      } else if (checkUrl.includes('69shuba') || checkUrl.includes('69shu') || checkUrl.includes('biquge')) {
+        setTranslationGenre('xianxia');
+      }
+
       if (data.data.chapters && data.data.chapters.length > 0) {
         if (resumeNovel) {
           const existingCount = resumeNovel.chaptersCount || 0;
@@ -161,6 +187,59 @@ export default function CrawlerView({
       setInspectError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsInspecting(false);
+    }
+  };
+
+  // Quick translate novel metadata directly in preview card
+  const handleTranslateMetadataQuick = async () => {
+    if (!inspectedNovel?.title) return;
+    setIsTranslatingMetadata(true);
+    try {
+      const domain = new URL(url).hostname;
+      let origLang: Novel['originalLanguage'] = 'zh';
+      if (domain.includes('syosetu') || domain.includes('kakuyomu')) origLang = 'ja';
+      else if (domain.includes('novelfull')) origLang = 'en';
+
+      const { ok, data, error } = await safeFetchJson<any>('/api/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'novel',
+          title: inspectedNovel.title,
+          author: inspectedNovel.author,
+          description: inspectedNovel.description,
+          sourceLang: origLang,
+          targetLang: 'Tiếng Việt',
+          genre: translationGenre,
+          modelName: aiModel,
+        }),
+      });
+
+      if (!ok) throw new Error(error || data?.error || 'Lỗi dịch tên truyện');
+
+      if (data.data?.translatedTitle) {
+        const transTitle = data.data.translatedTitle;
+        const transAuthor = data.data.translatedAuthor || inspectedNovel.author;
+        const transDesc = data.data.translatedDescription || inspectedNovel.description;
+
+        setTranslatedMetadata({
+          originalTitle: inspectedNovel.title,
+          translatedTitle: transTitle,
+          translatedAuthor: transAuthor,
+          translatedDescription: transDesc,
+        });
+
+        setInspectedNovel(prev => prev ? {
+          ...prev,
+          title: transTitle,
+          author: transAuthor,
+          description: transDesc,
+        } : prev);
+      }
+    } catch (err: unknown) {
+      console.warn('Lỗi dịch metadata:', err);
+    } finally {
+      setIsTranslatingMetadata(false);
     }
   };
 
@@ -192,17 +271,96 @@ export default function CrawlerView({
     const domain = new URL(url).hostname;
     let origLang: Novel['originalLanguage'] = 'zh';
     if (domain.includes('syosetu') || domain.includes('kakuyomu')) origLang = 'ja';
-    else if (domain.includes('novelfull')) origLang = 'en';
+    else if (domain.includes('novelfull') || domain.includes('royalroad')) origLang = 'en';
+
+    // 0. Nếu người dùng chọn dịch luôn cả tên truyện và thông tin giới thiệu
+    let finalTitle = inspectedNovel.title;
+    let finalAuthor = inspectedNovel.author;
+    let finalDescription = inspectedNovel.description;
+    let originalTitle = inspectedNovel.title;
+
+    if (autoTranslateOnCrawl && translateNovelTitle) {
+      if (translatedMetadata?.translatedTitle) {
+        finalTitle = translatedMetadata.translatedTitle;
+        if (translatedMetadata.translatedAuthor) finalAuthor = translatedMetadata.translatedAuthor;
+        if (translatedMetadata.translatedDescription) finalDescription = translatedMetadata.translatedDescription;
+        originalTitle = translatedMetadata.originalTitle || inspectedNovel.title;
+      } else {
+        setCrawlLogs(prev => [
+          { text: `🤖 [AI Dịch] Đang dịch tiêu đề truyện "${inspectedNovel.title}" sang Tiếng Việt...`, type: 'info' },
+          ...prev,
+        ]);
+
+        try {
+          const { ok: metaOk, data: metaData } = await safeFetchJson<any>('/api/translate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              mode: 'novel',
+              title: inspectedNovel.title,
+              author: inspectedNovel.author,
+              description: inspectedNovel.description,
+              sourceLang: origLang,
+              targetLang: 'Tiếng Việt',
+              genre: translationGenre,
+              modelName: aiModel,
+            }),
+          });
+
+          if (metaOk && metaData?.data?.translatedTitle) {
+            finalTitle = metaData.data.translatedTitle;
+            if (metaData.data.translatedAuthor) finalAuthor = metaData.data.translatedAuthor;
+            if (metaData.data.translatedDescription) finalDescription = metaData.data.translatedDescription;
+
+            setTranslatedMetadata({
+              originalTitle: inspectedNovel.title,
+              translatedTitle: finalTitle,
+              translatedAuthor: finalAuthor,
+              translatedDescription: finalDescription,
+            });
+
+            setInspectedNovel(prev => prev ? {
+              ...prev,
+              title: finalTitle,
+              author: finalAuthor,
+              description: finalDescription,
+            } : prev);
+
+            setCrawlLogs(prev => [
+              { text: `✨ [AI Dịch] Đã dịch tên truyện: "${originalTitle}" ➜ "${finalTitle}"`, type: 'success' },
+              ...prev,
+            ]);
+          } else {
+            setCrawlLogs(prev => [
+              { text: `⚠️ Không dịch được tên truyện (${metaData?.error || 'lỗi máy chủ'}), giữ nguyên tên gốc`, type: 'info' },
+              ...prev,
+            ]);
+          }
+        } catch (metaErr: unknown) {
+          const mMsg = metaErr instanceof Error ? metaErr.message : String(metaErr);
+          setCrawlLogs(prev => [
+            { text: `⚠️ Không dịch được tên truyện (${mMsg}), giữ nguyên tên gốc`, type: 'info' },
+            ...prev,
+          ]);
+        }
+      }
+    }
 
     let currentNovel: Novel = resumeNovel ? {
       ...resumeNovel,
+      title: finalTitle || resumeNovel.title,
+      originalTitle: originalTitle !== finalTitle ? originalTitle : resumeNovel.originalTitle,
+      author: finalAuthor || resumeNovel.author,
+      description: finalDescription || resumeNovel.description,
+      translationGenre: translationGenre || resumeNovel.translationGenre,
       cookieConfig,
       updatedAt: new Date().toISOString(),
     } : {
       id: novelId,
-      title: inspectedNovel.title,
-      author: inspectedNovel.author,
-      description: inspectedNovel.description,
+      title: finalTitle,
+      originalTitle: originalTitle !== finalTitle ? originalTitle : undefined,
+      author: finalAuthor,
+      description: finalDescription,
       coverUrl: inspectedNovel.coverUrl,
       sourceUrl: url,
       sourceDomain: domain,
@@ -211,6 +369,7 @@ export default function CrawlerView({
       status: 'ongoing',
       chaptersCount: 0,
       translatedChaptersCount: 0,
+      translationGenre: translationGenre,
       cookieConfig,
       crawlerConfig: preset.config,
       createdAt: new Date().toISOString(),
@@ -233,7 +392,7 @@ export default function CrawlerView({
       }
       onNovelCrawled(currentNovel, []);
       setCrawlLogs(prev => [
-        { text: `⚡ Đã khởi tạo hồ sơ truyện trên Supabase & Thư viện. Bắt đầu cào và import từng chương...`, type: 'info' },
+        { text: `⚡ Đã khởi tạo hồ sơ truyện trên Supabase & Thư viện. Bắt đầu cào${autoTranslateOnCrawl ? ' & dịch AI từng chương' : ' và import từng chương'}...`, type: 'info' },
         ...prev,
       ]);
     } catch (initErr) {
@@ -252,7 +411,7 @@ export default function CrawlerView({
       ]);
 
       try {
-        const res = await fetch('/api/crawler/chapter', {
+        const { ok: chapOk, data, error: chapError } = await safeFetchJson<any>('/api/crawler/chapter', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -262,21 +421,71 @@ export default function CrawlerView({
           }),
         });
 
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Lỗi bóc tách chương');
+        if (!chapOk || !data?.data) throw new Error(chapError || data?.error || 'Lỗi bóc tách chương');
 
         const rawTitle = data.data.title || item.title;
         const cleanedTitle = cleanChapterTitle(rawTitle, item.number) || `Chương ${item.number}`;
         const cleanedContent = cleanChapterContent(data.data.content);
+
+        let translatedTitle: string | undefined = undefined;
+        let translatedContent: string | undefined = undefined;
+        let translationStatus: Chapter['translationStatus'] = 'pending';
+        let translatedAt: string | undefined = undefined;
+
+        // >>> DỊCH NGAY BẰNG AI CHƯƠNG VỪA CÀO ĐƯỢC RỒI MỚI THÊM VÀO DATABASE <<<
+        if (autoTranslateOnCrawl) {
+          setCrawlLogs(prev => [
+            { text: `🤖 [AI Dịch] Đang dịch ${displayTitle} sang Tiếng Việt (${translationGenre})...`, type: 'info' },
+            ...prev.slice(0, 50),
+          ]);
+
+          try {
+            const { ok: transOk, data: transData, error: transError } = await safeFetchJson<any>('/api/translate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                title: cleanedTitle,
+                content: cleanedContent,
+                sourceLang: origLang,
+                targetLang: 'Tiếng Việt',
+                genre: translationGenre,
+                modelName: aiModel,
+              }),
+            });
+
+            if (transOk && transData?.data) {
+              translatedTitle = cleanChapterTitle(transData.data.translatedTitle, item.number);
+              translatedContent = transData.data.translatedContent;
+              translationStatus = 'translated';
+              translatedAt = new Date().toISOString();
+
+              setCrawlLogs(prev => [
+                { text: `✨ [AI Dịch] Đã dịch xong Chương ${item.number}: "${translatedTitle}"`, type: 'success' },
+                ...prev.slice(0, 50),
+              ]);
+            } else {
+              throw new Error(transError || transData?.error || 'AI dịch không trả về kết quả');
+            }
+          } catch (transErr: unknown) {
+            const transMsg = transErr instanceof Error ? transErr.message : String(transErr);
+            setCrawlLogs(prev => [
+              { text: `⚠️ [AI Dịch] Lỗi dịch Chương ${item.number} (${transMsg}) → Tạm lưu bản gốc vào DB để không gián đoạn`, type: 'error' },
+              ...prev.slice(0, 50),
+            ]);
+          }
+        }
 
         const newChapter: Chapter = {
           id: `chap-${novelId}-${item.number}`,
           novelId,
           chapterNumber: item.number,
           title: cleanedTitle,
+          translatedTitle,
           sourceUrl: item.url,
           rawContent: cleanedContent,
-          translationStatus: 'pending',
+          translatedContent,
+          translationStatus,
+          translatedAt,
           wordCount: data.data.wordCount || cleanedContent.split(/\s+/).filter(Boolean).length,
           createdAt: new Date().toISOString(),
         };
@@ -286,24 +495,32 @@ export default function CrawlerView({
         chaptersAccumulated.sort((a, b) => a.chapterNumber - b.chapterNumber);
         setCrawledChapters([...chaptersAccumulated]);
 
-        // >>> IMPORT NGAY CHƯƠNG VỪA CÀO VÀO SUPABASE & SERVER STORAGE <<<
+        // >>> IMPORT NGAY CHƯƠNG VỪA CÀO (VÀ ĐÃ DỊCH) VÀO SUPABASE & SERVER STORAGE <<<
         try {
-          const saveChapterRes = await fetch(`/api/novels/${novelId}/chapters`, {
+          const saveRes = await safeFetchJson(`/api/novels/${novelId}/chapters`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify([newChapter]),
+            body: JSON.stringify({
+              chapter: newChapter,
+              novel: currentNovel,
+            }),
           });
 
-          if (saveChapterRes.ok) {
+          if (saveRes.ok) {
+            const isTrans = newChapter.translationStatus === 'translated';
             currentNovel = {
               ...currentNovel,
               chaptersCount: Math.max(currentNovel.chaptersCount || 0, chaptersAccumulated.length),
+              translatedChaptersCount: chaptersAccumulated.filter(c => c.translationStatus === 'translated').length,
               updatedAt: new Date().toISOString(),
             };
             onNovelCrawled(currentNovel, chaptersAccumulated);
 
             setCrawlLogs(prev => [
-              { text: `⚡ Đã cào & import ngay Chương ${item.number} vào Supabase (${data.data.wordCount} chữ)`, type: 'success' },
+              { 
+                text: `⚡ [Supabase] Đã lưu Chương ${item.number}: "${isTrans ? newChapter.translatedTitle : cleanedTitle}" (${isTrans ? '✓ Đã dịch Tiếng Việt' : 'Bản gốc'}) vào Database`, 
+                type: 'success' 
+              },
               ...prev.slice(0, 50),
             ]);
           } else {
@@ -341,10 +558,12 @@ export default function CrawlerView({
       currentNovel.chaptersCount || 0,
       ...chaptersAccumulated.map(c => c.chapterNumber)
     );
+    const translatedCount = chaptersAccumulated.filter(c => c.translationStatus === 'translated').length;
 
     const finalizedNovel: Novel = {
       ...currentNovel,
       chaptersCount: highestChapterNumber,
+      translatedChaptersCount: translatedCount,
       cookieConfig,
       updatedAt: new Date().toISOString(),
     };
@@ -363,7 +582,10 @@ export default function CrawlerView({
     onNovelCrawled(finalizedNovel, chaptersAccumulated);
 
     setCrawlLogs(prev => [
-      { text: `🎉 Hoàn tất: Đã cào và import trực tiếp toàn bộ ${chaptersAccumulated.length} chương vào Supabase!`, type: 'success' },
+      { 
+        text: `🎉 Hoàn tất: Đã cào ${chaptersAccumulated.length} chương${translatedCount > 0 ? ` (${translatedCount} chương đã dịch AI)` : ''} và lưu vào cơ sở dữ liệu Supabase!`, 
+        type: 'success' 
+      },
       ...prev.slice(0, 50),
     ]);
 
@@ -396,7 +618,7 @@ export default function CrawlerView({
                   Chế độ tiếp tục cào truyện: <span className="text-amber-300">{resumeNovel.title}</span>
                 </div>
                 <div className="text-[11px] text-amber-200/80 mt-0.5">
-                  Thư viện hiện có <b>{resumeNovel.chaptersCount || 0} chương</b>. Khi bấm cào, các chương mới sẽ được thêm tiếp vào truyện và lưu tự động vào Firebase.
+                  Thư viện hiện có <b>{resumeNovel.chaptersCount || 0} chương</b>. Khi bấm cào, các chương mới sẽ được thêm tiếp vào truyện và lưu tự động vào Supabase.
                 </div>
               </div>
             </div>
@@ -424,7 +646,7 @@ export default function CrawlerView({
                 type="text"
                 value={url}
                 onChange={e => handleUrlChange(e.target.value)}
-                placeholder="Ví dụ: https://truyenfull.io/dau-pha-thuong-khung/ hoặc https://www.69shuba.cx/book/48123.htm"
+                placeholder="Ví dụ: https://truyenfull.io/dau-pha-thuong-khung/ hoặc https://www.69shuba.com/book/90442.htm"
                 className="w-full rounded-xl border border-slate-800 bg-slate-950 py-2.5 pl-10 pr-4 text-xs text-slate-200 placeholder-slate-500 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
               />
             </div>
@@ -467,7 +689,7 @@ export default function CrawlerView({
               </button>
               <button
                 type="button"
-                onClick={() => handleUrlChange('https://www.69shuba.cx/book/48123.htm')}
+                onClick={() => handleUrlChange('https://www.69shuba.com/book/90442.htm')}
                 className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] text-slate-300 hover:border-slate-700 hover:text-white transition-colors"
               >
                 🇨🇳 69Shuba (Trung Raw)
@@ -680,9 +902,35 @@ export default function CrawlerView({
                   </span>
                 </div>
 
-                <h3 className="text-lg font-bold text-white">
-                  {inspectedNovel.title}
-                </h3>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-lg font-bold text-white">
+                    {inspectedNovel.title}
+                  </h3>
+                  {translatedMetadata?.translatedTitle && (
+                    <span className="rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 text-[10px] font-semibold">
+                      ✨ Tên gốc: {translatedMetadata.originalTitle}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleTranslateMetadataQuick}
+                    disabled={isTranslatingMetadata}
+                    title="Dịch thử tên truyện và mô tả tác phẩm sang Tiếng Việt ngay"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-semibold text-amber-300 hover:bg-amber-500/20 active:scale-95 disabled:opacity-50 transition-all"
+                  >
+                    {isTranslatingMetadata ? (
+                      <>
+                        <RefreshCw className="h-3 w-3 animate-spin" />
+                        <span>Đang dịch...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-3 w-3 text-amber-400" />
+                        <span>{translatedMetadata ? 'Dịch lại tên' : 'Dịch thử tên & giới thiệu'}</span>
+                      </>
+                    )}
+                  </button>
+                </div>
                 <p className="text-xs text-slate-300">
                   Tác giả: <span className="font-semibold text-amber-400">{inspectedNovel.author}</span>
                 </p>
@@ -720,6 +968,82 @@ export default function CrawlerView({
                         (Thư viện đã có đủ tất cả chương hiện có trên web)
                       </span>
                     )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Auto-Translate on Crawl Options */}
+            <div className="border-t border-slate-800/80 pt-4">
+              <div className="rounded-xl border border-amber-500/30 bg-gradient-to-r from-amber-500/10 via-slate-900 to-indigo-950/40 p-3.5 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                  <label className="flex items-center gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={autoTranslateOnCrawl}
+                      onChange={e => setAutoTranslateOnCrawl(e.target.checked)}
+                      className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-amber-400 focus:ring-offset-slate-950"
+                    />
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles className="h-4 w-4 text-amber-400" />
+                      <span className="text-xs font-bold text-amber-200">
+                        Dịch ngay bằng AI sau khi cào rồi mới lưu vào Database
+                      </span>
+                      <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-300 border border-amber-500/30">
+                        TỰ ĐỘNG
+                      </span>
+                    </div>
+                  </label>
+
+                  {autoTranslateOnCrawl && (
+                    <label className="flex items-center gap-2 cursor-pointer text-xs bg-slate-950/80 px-2.5 py-1.5 rounded-lg border border-slate-800">
+                      <input
+                        type="checkbox"
+                        checked={translateNovelTitle}
+                        onChange={e => setTranslateNovelTitle(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-0"
+                      />
+                      <span className="text-[11px] font-medium text-amber-100">
+                        Dịch luôn cả tên truyện & tác giả sang Tiếng Việt
+                      </span>
+                    </label>
+                  )}
+                </div>
+
+                {autoTranslateOnCrawl && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-2 border-t border-amber-500/10 text-xs">
+                    <div>
+                      <label className="block text-[11px] text-slate-400 mb-1 font-medium">Văn phong dịch:</label>
+                      <select
+                        value={translationGenre}
+                        onChange={e => setTranslationGenre(e.target.value as TranslationGenre)}
+                        className="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-200 focus:border-amber-500 focus:outline-none"
+                      >
+                        <option value="xianxia">🇨🇳 Tiên Hiệp / Kiếm Hiệp (Hán-Việt chuẩn)</option>
+                        <option value="modern">🏙️ Đô Thị / Ngôn Tình / Hiện Đại</option>
+                        <option value="lightnovel">🇯🇵 Light Novel Nhật Bản</option>
+                        <option value="webnovel">⚔️ Web Novel Tây Phương / LitRPG</option>
+                        <option value="general">📖 Văn Học Tiêu Chuẩn</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] text-slate-400 mb-1 font-medium">Mô hình AI:</label>
+                      <select
+                        value={aiModel}
+                        onChange={e => setAiModel(e.target.value)}
+                        className="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-200 focus:border-amber-500 focus:outline-none"
+                      >
+                        <option value="gemini-3.8-flash">⚡ Gemini 3.8 Flash (Tốc độ cao & chuẩn xác)</option>
+                        <option value="gemini-3.1-pro-preview">🧠 Gemini 3.1 Pro (Phân tích dịch sâu)</option>
+                      </select>
+                    </div>
+
+                    <div className="flex items-center">
+                      <div className="text-[11px] text-amber-200/90 bg-amber-500/10 rounded-lg p-2 border border-amber-500/20 w-full leading-relaxed">
+                        💡 Mỗi chương sau khi bóc tách sẽ được Gemini dịch toàn bộ tiêu đề & nội dung sang Tiếng Việt rồi mới lưu trực tiếp vào cơ sở dữ liệu Supabase.
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -777,12 +1101,20 @@ export default function CrawlerView({
                 {isCrawling ? (
                   <>
                     <RefreshCw className="h-4 w-4 animate-spin" />
-                    <span>Đang cào dữ liệu...</span>
+                    <span>{autoTranslateOnCrawl ? 'Đang cào & dịch AI...' : 'Đang cào dữ liệu...'}</span>
                   </>
                 ) : (
                   <>
-                    <Play className="h-4 w-4 fill-current" />
-                    <span>Bắt đầu cào ({toChapter - fromChapter + 1} chương)</span>
+                    {autoTranslateOnCrawl ? (
+                      <Sparkles className="h-4 w-4 fill-current text-slate-950" />
+                    ) : (
+                      <Play className="h-4 w-4 fill-current" />
+                    )}
+                    <span>
+                      {autoTranslateOnCrawl
+                        ? `Cào & Dịch AI ngay (${toChapter - fromChapter + 1} chương)`
+                        : `Bắt đầu cào (${toChapter - fromChapter + 1} chương)`}
+                    </span>
                   </>
                 )}
               </button>
@@ -842,11 +1174,16 @@ export default function CrawlerView({
                     {resumeNovel ? `Đã cào thêm ${crawledChapters.length} chương mới!` : `Đã cào thành công ${crawledChapters.length} chương!`}
                   </h4>
                   <span className="rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-semibold">
-                    ✓ Đã lưu vào Firebase
+                    ✓ Đã lưu vào Supabase
                   </span>
+                  {(crawledNovelResult.translatedChaptersCount || 0) > 0 && (
+                    <span className="rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 text-[10px] font-semibold">
+                      ✨ Đã dịch {crawledNovelResult.translatedChaptersCount} chương
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-emerald-300/80 mt-0.5">
-                  Bộ truyện <b>&ldquo;{crawledNovelResult.title}&rdquo;</b> hiện có <b>{crawledNovelResult.chaptersCount} chương</b> đã được đồng bộ vào cơ sở dữ liệu Firebase Cloud Firestore.
+                  Bộ truyện <b>&ldquo;{crawledNovelResult.title}&rdquo;</b> hiện có <b>{crawledNovelResult.chaptersCount} chương</b> (trong đó <b>{crawledNovelResult.translatedChaptersCount || 0} chương đã dịch Tiếng Việt</b>) đã được đồng bộ vào cơ sở dữ liệu Supabase.
                 </p>
               </div>
             </div>
@@ -858,7 +1195,7 @@ export default function CrawlerView({
                 className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-semibold text-white shadow-md shadow-indigo-600/30 hover:bg-indigo-500 transition-all"
               >
                 <Sparkles className="h-4 w-4" />
-                <span>Chuyển sang Dịch AI ngay</span>
+                <span>Xem & Đọc bản dịch</span>
               </button>
             </div>
           </div>

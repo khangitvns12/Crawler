@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Novel, Chapter, TranslationGenre } from '@/types/novel';
 import { cleanChapterTitle, formatChapterDisplayTitle } from '@/lib/chapter-utils';
+import { safeFetchJson } from '@/lib/safe-json';
 import { 
   Sparkles, BookOpen, CheckCircle2, Clock, AlertCircle, RefreshCw, 
   Save, Play, Sliders, Plus, Trash2, Edit3, Eye, FileText
@@ -69,10 +70,9 @@ export default function TranslationView({
     if (!currentNovelId) return;
     let cancelled = false;
 
-    fetch(`/api/novels/${currentNovelId}/chapters`)
-      .then(res => res.json())
-      .then(data => {
-        if (!cancelled && data.success && Array.isArray(data.data)) {
+    safeFetchJson<any>(`/api/novels/${currentNovelId}/chapters`)
+      .then(({ ok, data }) => {
+        if (!cancelled && ok && data?.success && Array.isArray(data.data)) {
           const sorted = [...data.data].sort((a, b) => a.chapterNumber - b.chapterNumber);
           setChapters(sorted);
           if (sorted.length > 0) {
@@ -199,7 +199,7 @@ export default function TranslationView({
       ]);
 
       try {
-        const res = await fetch('/api/translate', {
+        const { ok, data, error } = await safeFetchJson<any>('/api/translate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -214,8 +214,7 @@ export default function TranslationView({
           }),
         });
 
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Lỗi dịch thuật');
+        if (!ok || !data?.data) throw new Error(error || data?.error || 'Lỗi dịch thuật');
 
         const cleanedTranslatedTitle = cleanChapterTitle(data.data.translatedTitle, chapNum);
 
@@ -264,7 +263,7 @@ export default function TranslationView({
     setTranslatingChapterNumber(inspectingChapter.chapterNumber);
 
     try {
-      const res = await fetch('/api/translate', {
+      const { ok, data, error } = await safeFetchJson<any>('/api/translate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -279,8 +278,7 @@ export default function TranslationView({
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Lỗi dịch thuật');
+      if (!ok || !data?.data) throw new Error(error || data?.error || 'Lỗi dịch thuật');
 
       const cleanedTranslatedTitle = cleanChapterTitle(data.data.translatedTitle, inspectingChapter.chapterNumber);
 
@@ -297,8 +295,16 @@ export default function TranslationView({
       setEditedContent(updatedChapter.translatedContent || '');
       setChapters(prev => prev.map(c => c.chapterNumber === inspectingChapter.chapterNumber ? updatedChapter : c));
       onChapterTranslated(activeNovel.id, updatedChapter);
+      setTranslateLogs(prev => [
+        `✓ Dịch xong Chương ${inspectingChapter.chapterNumber}: ${cleanedTranslatedTitle}`,
+        ...prev.slice(0, 30),
+      ]);
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : String(err));
+      const errorText = err instanceof Error ? err.message : String(err);
+      setTranslateLogs(prev => [
+        `✗ Lỗi dịch chương ${inspectingChapter.chapterNumber}: ${errorText}`,
+        ...prev.slice(0, 30),
+      ]);
     } finally {
       setIsTranslating(false);
       setTranslatingChapterNumber(null);

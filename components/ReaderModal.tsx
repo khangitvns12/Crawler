@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Novel, Chapter } from '@/types/novel';
 import { cleanChapterTitle, cleanChapterContent, formatChapterDisplayTitle } from '@/lib/chapter-utils';
+import { safeFetchJson } from '@/lib/safe-json';
 import { 
   X, ChevronLeft, ChevronRight, BookOpen, Settings, List, 
   Sun, Moon, Compass, Sparkles, Sliders
@@ -40,10 +41,9 @@ export default function ReaderModal({
   // Fetch all chapters
   useEffect(() => {
     let active = true;
-    fetch(`/api/novels/${novel.id}/chapters`)
-      .then(res => res.json())
-      .then(data => {
-        if (active && data.success && Array.isArray(data.data)) {
+    safeFetchJson<any>(`/api/novels/${novel.id}/chapters`)
+      .then(({ ok, data }) => {
+        if (active && ok && data?.success && Array.isArray(data.data)) {
           const sorted = [...data.data].sort((a, b) => a.chapterNumber - b.chapterNumber);
           setChapters(sorted);
         }

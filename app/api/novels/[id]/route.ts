@@ -25,7 +25,12 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
-    const body = await req.json();
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'Dữ liệu yêu cầu không phải định dạng JSON hợp lệ' }, { status: 400 });
+    }
     const existing = serverStorage.getNovelById(id);
     if (!existing) {
       return NextResponse.json({ error: 'Không tìm thấy truyện' }, { status: 404 });

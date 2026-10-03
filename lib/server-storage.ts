@@ -497,6 +497,10 @@ class ServerStorage {
     };
   }
 
+  public getNovel(id: string): Novel | null {
+    return this.getNovelById(id);
+  }
+
   private async saveNovelToFirestore(novel: Novel): Promise<void> {
     try {
       const safeId = sanitizeFirestoreId(novel.id);
@@ -671,7 +675,7 @@ class ServerStorage {
     }
   }
 
-  public saveChapter(chapter: Chapter): Chapter {
+  public saveChapter(chapter: Chapter, novelFallback?: Novel): Chapter {
     const cleanChap = sanitizeChapter(chapter);
     if (!this.state.chapters[cleanChap.novelId]) {
       this.state.chapters[cleanChap.novelId] = [];
@@ -687,13 +691,20 @@ class ServerStorage {
     // Always keep chapters strictly sorted by chapterNumber ascending
     list.sort((a, b) => a.chapterNumber - b.chapterNumber);
 
+    // If novelFallback is provided and not in local state, add it
+    if (novelFallback && !this.state.novels[cleanChap.novelId]) {
+      this.state.novels[cleanChap.novelId] = { ...novelFallback };
+    }
+
     // Update novel chapter counts
-    if (this.state.novels[cleanChap.novelId]) {
-      this.state.novels[cleanChap.novelId].chaptersCount = list.length;
-      this.state.novels[cleanChap.novelId].translatedChaptersCount = list.filter(c => c.translationStatus === 'translated').length;
-      this.state.novels[cleanChap.novelId].updatedAt = new Date().toISOString();
+    const parentNovel = this.state.novels[cleanChap.novelId] || novelFallback;
+    if (parentNovel) {
+      parentNovel.chaptersCount = Math.max(parentNovel.chaptersCount || 0, list.length);
+      parentNovel.translatedChaptersCount = list.filter(c => c.translationStatus === 'translated').length;
+      parentNovel.updatedAt = new Date().toISOString();
+      this.state.novels[cleanChap.novelId] = parentNovel;
       if (isSupabaseConfigured()) {
-        saveSupabaseNovel(this.state.novels[cleanChap.novelId]).catch(() => {});
+        saveSupabaseNovel(parentNovel).catch(() => {});
       }
     }
 
@@ -701,7 +712,7 @@ class ServerStorage {
 
     // Persist to Supabase if configured, otherwise Firestore
     if (isSupabaseConfigured()) {
-      saveSupabaseChapters([cleanChap]).catch(e => console.warn('Supabase saveChapter warning:', e));
+      saveSupabaseChapters([cleanChap], parentNovel).catch(e => console.warn('Supabase saveChapter warning:', e));
     } else {
       this.saveChapterToFirestore(cleanChap).catch(() => {});
     }
@@ -709,33 +720,36 @@ class ServerStorage {
     return cleanChap;
   }
 
-  public async saveChapterAsync(chapter: Chapter): Promise<Chapter> {
-    const saved = this.saveChapter(chapter);
+  public async saveChapterAsync(chapter: Chapter, novelFallback?: Novel): Promise<Chapter> {
+    const saved = this.saveChapter(chapter, novelFallback);
+    const parentNovel = this.state.novels[saved.novelId] || novelFallback;
     if (isSupabaseConfigured()) {
-      await saveSupabaseChapters([saved]);
+      await saveSupabaseChapters([saved], parentNovel);
     } else {
       await this.saveChapterToFirestore(saved);
     }
     return saved;
   }
 
-  public saveChapters(chapters: Chapter[]): void {
+  public saveChapters(chapters: Chapter[], novelFallback?: Novel): void {
     const cleanList = sanitizeChapters(chapters);
     for (const ch of cleanList) {
-      this.saveChapter(ch);
+      this.saveChapter(ch, novelFallback);
     }
     if (isSupabaseConfigured()) {
-      saveSupabaseChapters(cleanList).catch(e => console.warn('Supabase saveChapters warning:', e));
+      const parentNovel = novelFallback || (cleanList.length > 0 ? this.state.novels[cleanList[0].novelId] : undefined);
+      saveSupabaseChapters(cleanList, parentNovel).catch(e => console.warn('Supabase saveChapters warning:', e));
     }
   }
 
-  public async saveChaptersAsync(chapters: Chapter[]): Promise<void> {
+  public async saveChaptersAsync(chapters: Chapter[], novelFallback?: Novel): Promise<void> {
     const cleanList = sanitizeChapters(chapters);
     for (const ch of cleanList) {
-      this.saveChapter(ch);
+      this.saveChapter(ch, novelFallback);
     }
+    const parentNovel = novelFallback || (cleanList.length > 0 ? this.state.novels[cleanList[0].novelId] : undefined);
     if (isSupabaseConfigured()) {
-      await saveSupabaseChapters(cleanList);
+      await saveSupabaseChapters(cleanList, parentNovel);
     } else {
       // Batch save to Firestore in chunks of 5
       const CHUNK_SIZE = 5;

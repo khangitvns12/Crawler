@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { safeFetchJson } from '@/lib/safe-json';
 import { 
   X, Database, CheckCircle2, AlertCircle, Copy, Check, 
   Terminal, ArrowRight, RefreshCw, Sparkles, ExternalLink, Code
@@ -26,10 +27,17 @@ export default function SupabaseModal({ onClose }: SupabaseModalProps) {
 
   const fetchStatus = () => {
     setIsLoading(true);
-    fetch('/api/supabase/status')
-      .then(res => res.json())
-      .then(data => {
-        setStatusData(data);
+    safeFetchJson<any>('/api/supabase/status')
+      .then(({ ok, data, error }) => {
+        if (ok && data) {
+          setStatusData(data);
+        } else {
+          setStatusData({
+            configured: false,
+            ok: false,
+            message: error || 'Không thể kết nối đến API server',
+          });
+        }
       })
       .catch(() => {
         setStatusData({
@@ -45,11 +53,18 @@ export default function SupabaseModal({ onClose }: SupabaseModalProps) {
 
   useEffect(() => {
     let isMounted = true;
-    fetch('/api/supabase/status')
-      .then(res => res.json())
-      .then(data => {
+    safeFetchJson<any>('/api/supabase/status')
+      .then(({ ok, data, error }) => {
         if (isMounted) {
-          setStatusData(data);
+          if (ok && data) {
+            setStatusData(data);
+          } else {
+            setStatusData({
+              configured: false,
+              ok: false,
+              message: error || 'Không thể kết nối đến API server',
+            });
+          }
           setIsLoading(false);
         }
       })
@@ -72,13 +87,12 @@ export default function SupabaseModal({ onClose }: SupabaseModalProps) {
     setIsMigrating(true);
     setMigrateResult(null);
     try {
-      const res = await fetch('/api/supabase/migrate', { method: 'POST' });
-      const data = await res.json();
-      if (res.ok) {
+      const { ok, data, error } = await safeFetchJson<any>('/api/supabase/migrate', { method: 'POST' });
+      if (ok && data) {
         setMigrateResult(`✓ ${data.message}`);
         fetchStatus();
       } else {
-        setMigrateResult(`✗ Lỗi: ${data.error || 'Di chuyển thất bại'}`);
+        setMigrateResult(`✗ Lỗi: ${error || data?.error || 'Di chuyển thất bại'}`);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

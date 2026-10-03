@@ -1,7 +1,7 @@
 import * as cheerio from 'cheerio';
 import { CookieConfig, CrawlerConfig } from '@/types/novel';
 import { findPresetForUrl } from './preset-extractors';
-import { cleanChapterTitle, cleanChapterContent } from './chapter-utils';
+import { cleanChapterTitle, cleanChapterContent, parseChapterNumber } from './chapter-utils';
 
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
@@ -40,7 +40,7 @@ export interface ChapterContentResult {
 }
 
 /**
- * Fetch HTML with full Cookie and custom headers support
+ * Fetch HTML with full Cookie, custom headers, and intelligent multi-encoding support (GBK/GB18030, Shift_JIS, Big5, UTF-8)
  */
 export async function fetchHtmlWithCookies(options: CrawlFetchOptions): Promise<{ html: string; status: number; headers: Record<string, string> }> {
   const { url, cookieConfig, customHeaders, timeoutMs = 20000 } = options;
@@ -93,28 +93,82 @@ export async function fetchHtmlWithCookies(options: CrawlFetchOptions): Promise<
     });
 
     const contentType = response.headers.get('content-type') || '';
-    let html = '';
+    const contentTypeLower = contentType.toLowerCase();
+    const arrayBuffer = await response.arrayBuffer();
 
-    if (contentType.toLowerCase().includes('gbk') || contentType.toLowerCase().includes('gb2312')) {
-      const arrayBuffer = await response.arrayBuffer();
-      try {
-        const decoder = new TextDecoder('gb18030');
-        html = decoder.decode(arrayBuffer);
-      } catch {
-        const fallbackDecoder = new TextDecoder('utf-8');
-        html = fallbackDecoder.decode(arrayBuffer);
+    // Known GBK Chinese novel sites (69shuba, biquge, 5200, ptwxz, etc.)
+    const isKnownGbkSite = /69shuba|69shu|69xinshu|69yuedu|biquge|xbiquge|5200|ptwxz|piaotian|bxwx|uukanshu|77xsw|dingdian/i.test(url);
+    const isKnownJapaneseSite = /syosetu|kakuyomu|alphapolis|hameln/i.test(url);
+
+    // Inspect first 4096 bytes for <meta charset="..."> or <meta http-equiv="Content-Type" content="...charset=...">
+    let detectedEncoding = 'utf-8';
+    try {
+      const asciiSample = new TextDecoder('ascii', { fatal: false }).decode(arrayBuffer.slice(0, 4096));
+      const metaMatch = asciiSample.match(/<meta[^>]+charset=["']?([a-zA-Z0-9_-]+)/i) ||
+                        asciiSample.match(/<meta[^>]+content=["'][^"']*charset=([a-zA-Z0-9_-]+)/i);
+      if (metaMatch) {
+        const cs = metaMatch[1].toLowerCase();
+        if (cs === 'gbk' || cs === 'gb2312' || cs === 'gb18030') {
+          detectedEncoding = 'gb18030';
+        } else if (cs === 'shift_jis' || cs === 'sjis' || cs === 'shift-jis') {
+          detectedEncoding = 'shift_jis';
+        } else if (cs === 'euc-jp') {
+          detectedEncoding = 'euc-jp';
+        } else if (cs === 'big5') {
+          detectedEncoding = 'big5';
+        } else if (cs === 'utf-8') {
+          detectedEncoding = 'utf-8';
+        }
       }
-    } else if (contentType.toLowerCase().includes('shift_jis') || contentType.toLowerCase().includes('euc-jp')) {
-      const arrayBuffer = await response.arrayBuffer();
-      try {
-        const decoder = new TextDecoder('shift_jis');
-        html = decoder.decode(arrayBuffer);
-      } catch {
-        const fallbackDecoder = new TextDecoder('utf-8');
-        html = fallbackDecoder.decode(arrayBuffer);
+    } catch {
+      // ignore
+    }
+
+    // Determine target encoding priority:
+    // 1. Explicit charset in Content-Type header
+    // 2. Meta tag in HTML
+    // 3. Known domain heuristic
+    let targetEncoding = 'utf-8';
+    if (contentTypeLower.includes('gbk') || contentTypeLower.includes('gb2312') || contentTypeLower.includes('gb18030')) {
+      targetEncoding = 'gb18030';
+    } else if (contentTypeLower.includes('shift_jis') || contentTypeLower.includes('shift-jis') || contentTypeLower.includes('sjis')) {
+      targetEncoding = 'shift_jis';
+    } else if (contentTypeLower.includes('euc-jp')) {
+      targetEncoding = 'euc-jp';
+    } else if (contentTypeLower.includes('big5')) {
+      targetEncoding = 'big5';
+    } else if (detectedEncoding !== 'utf-8') {
+      targetEncoding = detectedEncoding;
+    } else if (isKnownGbkSite) {
+      targetEncoding = 'gb18030';
+    } else if (isKnownJapaneseSite) {
+      targetEncoding = 'utf-8';
+    }
+
+    let html = '';
+    try {
+      const decoder = new TextDecoder(targetEncoding);
+      html = decoder.decode(arrayBuffer);
+    } catch {
+      const fallbackDecoder = new TextDecoder('utf-8');
+      html = fallbackDecoder.decode(arrayBuffer);
+    }
+
+    // If decoded with UTF-8 but domain was a Chinese raw site and produced mojibake (\uFFFD), retry with gb18030
+    if (targetEncoding === 'utf-8' && (isKnownGbkSite || /[\u4e00-\u9fa5]/.test(url))) {
+      const replacementCount = (html.match(/\uFFFD/g) || []).length;
+      if (replacementCount > 10) {
+        try {
+          const gbkDecoder = new TextDecoder('gb18030');
+          const gbkHtml = gbkDecoder.decode(arrayBuffer);
+          const gbkReplacements = (gbkHtml.match(/\uFFFD/g) || []).length;
+          if (gbkReplacements < replacementCount) {
+            html = gbkHtml;
+          }
+        } catch {
+          // ignore
+        }
       }
-    } else {
-      html = await response.text();
     }
 
     return { html, status, headers: responseHeaders };
@@ -135,19 +189,23 @@ function cleanContentHtml(html: string): string {
     .replace(/<p[^>]*>/gi, '')
     .replace(/<div[^>]*>/gi, '')
     .replace(/<\/div>/gi, '\n')
+    .replace(/&emsp;/gi, ' ')
+    .replace(/&ensp;/gi, ' ')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
     .replace(/&amp;/gi, '&')
     .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'");
+    .replace(/&#39;/gi, "'")
+    .replace(/[\u3000\u2003]/g, ' ')
+    .replace(/loadAdv\s*\(\s*\d+\s*,\s*\d+\s*\)\s*;?/gi, '');
 
   text = text.replace(/<[^>]+>/g, '');
 
   const lines = text
     .split('\n')
     .map(line => line.trim())
-    .filter(line => line.length > 0);
+    .filter(line => line.length > 0 && !/^loadAdv\s*\(/i.test(line));
 
   const rawParagraphs = lines.join('\n\n');
   return cleanChapterContent(rawParagraphs);
@@ -167,6 +225,11 @@ function extractChaptersFromCheerio(
   // Collect potential chapter link elements
   const selectors = [
     config.chapterListSelector,
+    '#catalog a',
+    '.catalog a',
+    '#catalog ul li a',
+    '.catalog ul li a',
+    'a[href*="/txt/"]',
     '.list-chapter a',
     '#list-chapter a',
     '.chapter-list a',
@@ -175,6 +238,9 @@ function extractChaptersFromCheerio(
     '#list-chapter li a',
     '.list-chapters a',
     '#chapters-list a',
+    '#list dd a',
+    '#list a',
+    '.listmain a',
     'div.list-chapter a',
     'div.row-chapter a',
     'a[href*="/chuong-"]',
@@ -208,9 +274,11 @@ function extractChaptersFromCheerio(
       cleanUrl === parsedOrigin.origin + '/'
     ) return;
 
-    // Filter out non-chapter links (navigation, author, categories)
-    if (cleanUrl.match(/\/(the-loai|tac-gia|danh-sach|page|author|category|tag)\//i)) return;
+    // Filter out non-chapter links (navigation, author, categories, book detail pages)
+    if (cleanUrl.match(/\/(the-loai|tac-gia|danh-sach|page|author|category|tag|modules\/article)\//i)) return;
     if (cleanUrl.match(/\/trang-\d+\/?$/i)) return; // pagination page itself
+    if (cleanUrl.match(/\/book\/\d+(\.htm|\/)?$/i)) return; // novel index/catalog page itself
+    if (/69shuba|69shu|69xinshu|69yuedu/i.test(cleanUrl) && !cleanUrl.includes('/txt/')) return; // 69shuba chapters always have /txt/{bookId}/{chapId}
 
     // Extract chapter title
     let chapTitle = linkTag.text().trim();
@@ -219,14 +287,23 @@ function extractChaptersFromCheerio(
       chapTitle = attrTitle;
     }
 
+    // Skip utility buttons like "完整目录", "开始阅读", "书架", etc.
+    if (/^(?:完整目录|开始阅读|我的书架|加入书架|返回书页|章节目录|投票推荐|目录)$/i.test(chapTitle)) {
+      return;
+    }
+
+    // Parse real numeric chapter number if present
+    const parsedNum = parseChapterNumber(chapTitle);
+    const assignedNum = parsedNum !== null ? parsedNum : chapters.length + 1;
+
     // Remove noisy icons, badges or leading symbols and clean duplicate chapter prefixes
-    chapTitle = cleanChapterTitle(chapTitle, chapters.length + 1);
+    chapTitle = cleanChapterTitle(chapTitle, assignedNum);
     if (!chapTitle) return;
 
     // Deduplicate by clean canonical URL
     if (!chapters.some(c => c.url.split('#')[0] === cleanUrl)) {
       chapters.push({
-        number: chapters.length + 1,
+        number: assignedNum,
         title: chapTitle,
         url: cleanUrl,
       });
@@ -401,7 +478,7 @@ function detectPaginationPages(
 }
 
 /**
- * Inspect a novel main/table of contents URL and extract metadata (with Multi-page Pagination support)
+ * Inspect a novel main/table of contents URL and extract metadata (with Multi-page Pagination & 69shuba Catalog support)
  */
 export async function inspectNovel(
   url: string,
@@ -409,10 +486,33 @@ export async function inspectNovel(
   customConfig?: CrawlerConfig,
   options?: { fetchAllPages?: boolean; maxPages?: number }
 ): Promise<NovelMetadata> {
-  const { html } = await fetchHtmlWithCookies({ url, cookieConfig });
-  const $ = cheerio.load(html);
+  const is69shuba = /69shuba|69shu|69xinshu|69yuedu/i.test(url);
   const preset = findPresetForUrl(url);
   const config = { ...preset.config, ...(customConfig || {}) };
+
+  let mainUrl = url;
+  let catalogUrl = url;
+  let detailUrl = url;
+
+  // 69shuba URL normalization: book page (/book/{id}.htm) has metadata, catalog (/book/{id}/) has ALL chapters
+  if (is69shuba) {
+    try {
+      const parsedUrl = new URL(url);
+      const hostname = parsedUrl.hostname;
+      const bookIdMatch = url.match(/(?:book|txt)\/(\d+)/i);
+      if (bookIdMatch) {
+        const bookId = bookIdMatch[1];
+        detailUrl = `https://${hostname}/book/${bookId}.htm`;
+        catalogUrl = `https://${hostname}/book/${bookId}/`;
+        mainUrl = detailUrl;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const { html } = await fetchHtmlWithCookies({ url: mainUrl, cookieConfig });
+  const $ = cheerio.load(html);
 
   // 1. Extract Title
   let title = '';
@@ -421,7 +521,7 @@ export async function inspectNovel(
   }
   if (!title) {
     title = $('meta[property="og:title"]').attr('content') || $('title').text().trim();
-    title = title.replace(/\s*[-|_|–]\s*(TruyenFull|Metruyenchu|Tangthuvien|NovelFull|Syosetu|Biquge|69shuba|Đọc truyện).*$/i, '').trim();
+    title = title.replace(/\s*[-|_|–]\s*(TruyenFull|Metruyenchu|Tangthuvien|NovelFull|Syosetu|Biquge|69shuba|69shu|Đọc truyện).*$/i, '').trim();
   }
 
   // 2. Extract Author
@@ -462,11 +562,50 @@ export async function inspectNovel(
     }
   }
 
-  // 5. Extract Chapters on Page 1
+  // 5. Extract Chapters
   const chapters: Array<{ number: number; title: string; url: string }> = [];
-  extractChaptersFromCheerio($, config, url, chapters);
 
-  // 6. Multi-page Pagination Handling
+  if (is69shuba && catalogUrl !== mainUrl) {
+    // For 69shuba: Fetch dedicated catalog page which contains all 100% chapters
+    try {
+      const { html: catHtml } = await fetchHtmlWithCookies({ url: catalogUrl, cookieConfig });
+      const $cat = cheerio.load(catHtml);
+      extractChaptersFromCheerio($cat, config, catalogUrl, chapters);
+    } catch {
+      // Fallback to main page if catalog page fails
+      extractChaptersFromCheerio($, config, url, chapters);
+    }
+  } else {
+    // Normal extraction on current page
+    extractChaptersFromCheerio($, config, url, chapters);
+  }
+
+  // Automatic catalog page detection for other sites if initial page has few chapters (e.g. only latest 5-10 chapters)
+  if (chapters.length <= 10) {
+    const catalogLinkTag = $(
+      'a:contains("完整目录"), a:contains("全部章节"), a:contains("所有章节"), a:contains("查看目录"), a:contains("章节目录"), a:contains("Mục lục đầy đủ"), a:contains("Xem tất cả"), a[href*="/catalog/"], a[href*="/mulu/"], a[href*="/all/"]'
+    ).first();
+    const catHref = catalogLinkTag.attr('href');
+    if (catHref && !catHref.startsWith('javascript:') && catHref !== '#') {
+      try {
+        const fullCatUrl = new URL(catHref, url).href;
+        if (fullCatUrl !== url) {
+          const { html: catHtml } = await fetchHtmlWithCookies({ url: fullCatUrl, cookieConfig });
+          const $cat = cheerio.load(catHtml);
+          const fullChapters: Array<{ number: number; title: string; url: string }> = [];
+          extractChaptersFromCheerio($cat, config, fullCatUrl, fullChapters);
+          if (fullChapters.length > chapters.length) {
+            chapters.length = 0;
+            chapters.push(...fullChapters);
+          }
+        }
+      } catch {
+        // non-fatal
+      }
+    }
+  }
+
+  // 6. Multi-page Pagination Handling (for TruyenFull, Metruyenchu, etc.)
   const maxPagesToFetch = options?.maxPages ?? 150;
   const { pageUrls, totalPages } = detectPaginationPages($, config, url, maxPagesToFetch);
 
@@ -500,7 +639,16 @@ export async function inspectNovel(
     }
   }
 
-  // Sort chapters naturally and renumber chapters sequentially and clean title prefixes
+  // Check if chapters are listed in reverse chronological order (common on 69shuba where chapter 568 is listed before chapter 1)
+  if (chapters.length > 1) {
+    const firstNum = chapters[0].number;
+    const lastNum = chapters[chapters.length - 1].number;
+    if (firstNum && lastNum && firstNum > lastNum) {
+      chapters.reverse();
+    }
+  }
+
+  // Sort chapters strictly by chapter number
   chapters.sort((a, b) => (a.number ?? 0) - (b.number ?? 0));
   chapters.forEach((ch, idx) => {
     ch.number = idx + 1;
@@ -512,7 +660,7 @@ export async function inspectNovel(
     author: author || 'Khuyết danh',
     description: description || 'Không có tóm tắt giới thiệu.',
     coverUrl: coverUrl || '',
-    totalPages,
+    totalPages: Math.max(totalPages, 1),
     chapters,
   };
 }
@@ -530,17 +678,7 @@ export async function scrapeChapterContent(
   const preset = findPresetForUrl(chapterUrl);
   const config = { ...preset.config, ...(customConfig || {}) };
 
-  // Remove unwanted elements first
-  const excludes = config.excludeSelectors || [
-    'script', 'style', 'iframe', '.ads', '.advertisement', '.social-share',
-    '.novel_attention', 'div.contentadv', '.bottom-ad', '.ads-holder',
-    'button', '.btn', '.navigation', '.prev-next', '#comment', '.comment-section',
-    '.watermark', '.source-note', '.chapter-source', '.signature', '.post-tail',
-    '.source', '.copyright', '.tail-info', '.ad-box', '.ad-container', '.reading-footer'
-  ];
-  $(excludes.join(', ')).remove();
-
-  // 1. Extract Chapter Title
+  // 1. Extract Chapter Title FIRST before removing any tags
   let title = '';
   if (config.chapterTitleSelector) {
     title = $(config.chapterTitleSelector).first().text().trim();
@@ -551,11 +689,23 @@ export async function scrapeChapterContent(
   if (!title) {
     title = $('title').text().trim().replace(/\s*[-|_].*$/, '');
   }
-
-  // Clean duplicate prefixes like "Chương 1: Chương 1:"
   title = cleanChapterTitle(title);
 
-  // 2. Extract Content
+  // 2. Remove unwanted elements & advertisement wrappers
+  const excludes = config.excludeSelectors || [
+    'script', 'style', 'iframe', '.ads', '.advertisement', '.social-share',
+    '.novel_attention', 'div.contentadv', '.bottom-ad', '.ads-holder',
+    'button', '.btn', '.navigation', '.prev-next', '#comment', '.comment-section',
+    '.watermark', '.source-note', '.chapter-source', '.signature', '.post-tail',
+    '.source', '.copyright', '.tail-info', '.ad-box', '.ad-container', '.reading-footer',
+    '.txtinfo', '#txtright'
+  ];
+  $(excludes.join(', ')).remove();
+
+  // Also remove h1 and h2 from content containers so title is not duplicated in text
+  $('h1, h2, .chapter-title').remove();
+
+  // 3. Extract Content
   let contentHtml = '';
   if (config.chapterContentSelector) {
     contentHtml = $(config.chapterContentSelector).first().html() || '';

@@ -284,9 +284,21 @@ export async function fetchSupabaseChapters(novelId: string): Promise<Chapter[]>
   return sanitizeChapters((data || []).map(supabaseRowToChapter));
 }
 
-export async function saveSupabaseChapters(chapters: Chapter[]): Promise<boolean> {
+export async function saveSupabaseChapters(chapters: Chapter[], novelFallback?: Novel): Promise<boolean> {
   const client = getSupabaseClient();
   if (!client || chapters.length === 0) return false;
+
+  const novelId = chapters[0].novelId;
+
+  // 1. If novelFallback is provided, ensure novel is upserted in Supabase first
+  // to prevent foreign key constraint violations (chapters_novel_id_fkey)
+  if (novelFallback) {
+    try {
+      await saveSupabaseNovel(novelFallback);
+    } catch {
+      // Non-fatal fallback
+    }
+  }
 
   const rows = chapters.map(chapterToSupabaseRow);
   
@@ -305,5 +317,37 @@ export async function saveSupabaseChapters(chapters: Chapter[]): Promise<boolean
     }
   }
 
+  // 2. Automatically update novel chapter count, translated count, and updated_at in Supabase
+  try {
+    const { count } = await client
+      .from('chapters')
+      .select('*', { count: 'exact', head: true })
+      .eq('novel_id', novelId);
+
+    const { count: transCount } = await client
+      .from('chapters')
+      .select('*', { count: 'exact', head: true })
+      .eq('novel_id', novelId)
+      .eq('translation_status', 'translated');
+
+    if (typeof count === 'number' && count > 0) {
+      await client
+        .from('novels')
+        .update({
+          chapters_count: count,
+          translated_chapters_count: typeof transCount === 'number' ? transCount : 0,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', novelId);
+    }
+  } catch {
+    // Non-fatal
+  }
+
   return true;
 }
+
+export async function saveSupabaseChapter(chapter: Chapter, novelFallback?: Novel): Promise<boolean> {
+  return saveSupabaseChapters([chapter], novelFallback);
+}
+
