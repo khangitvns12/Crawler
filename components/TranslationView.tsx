@@ -4,9 +4,10 @@ import React, { useState, useEffect } from 'react';
 import { Novel, Chapter, TranslationGenre } from '@/types/novel';
 import { cleanChapterTitle, formatChapterDisplayTitle } from '@/lib/chapter-utils';
 import { safeFetchJson } from '@/lib/safe-json';
+import { getActiveApiKeyStrings, GEMINI_KEYS_CHANGED_EVENT } from '@/lib/api-key-storage';
 import { 
   Sparkles, BookOpen, CheckCircle2, Clock, AlertCircle, RefreshCw, 
-  Save, Play, Sliders, Plus, Trash2, Edit3, Eye, FileText
+  Save, Play, Sliders, Plus, Trash2, Edit3, Eye, FileText, KeyRound
 } from 'lucide-react';
 
 interface TranslationViewProps {
@@ -15,6 +16,7 @@ interface TranslationViewProps {
   onUpdateNovelGlossary: (novelId: string, glossary: Record<string, string>) => void;
   onChapterTranslated: (novelId: string, chapter: Chapter) => void;
   onReadChapter: (novel: Novel, chapterNumber: number) => void;
+  onOpenApiKeyModal?: () => void;
 }
 
 export default function TranslationView({
@@ -23,7 +25,23 @@ export default function TranslationView({
   onUpdateNovelGlossary,
   onChapterTranslated,
   onReadChapter,
+  onOpenApiKeyModal,
 }: TranslationViewProps) {
+  const [activeKeysCount, setActiveKeysCount] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      return getActiveApiKeyStrings().length;
+    }
+    return 0;
+  });
+
+  useEffect(() => {
+    const handler = () => {
+      setActiveKeysCount(getActiveApiKeyStrings().length);
+    };
+    window.addEventListener(GEMINI_KEYS_CHANGED_EVENT, handler);
+    return () => window.removeEventListener(GEMINI_KEYS_CHANGED_EVENT, handler);
+  }, []);
+
   // Active novel ID selection
   const [internalNovelId, setInternalNovelId] = useState<string>('');
   const currentNovelId = selectedNovelId || internalNovelId || (novels.length > 0 ? novels[0].id : '');
@@ -36,6 +54,7 @@ export default function TranslationView({
   // Translation configuration
   const [selectedGenre, setSelectedGenre] = useState<TranslationGenre | null>(null);
   const genre = selectedGenre ?? ((activeNovel?.translationGenre as TranslationGenre) || 'xianxia');
+  const [aiModel, setAiModel] = useState<string>('gemini-3.8-flash');
   const [selectedChapterNumbers, setSelectedChapterNumbers] = useState<number[]>([]);
 
   // Glossary Manager State
@@ -209,8 +228,10 @@ export default function TranslationView({
             targetLang: 'Tiếng Việt',
             genre,
             glossary,
+            modelName: aiModel,
             novelId: activeNovel.id,
             chapterNumber: chapNum,
+            apiKeys: getActiveApiKeyStrings(),
           }),
         });
 
@@ -237,8 +258,9 @@ export default function TranslationView({
         }
 
         const translatedDisplay = formatChapterDisplayTitle(chapNum, cleanedTranslatedTitle);
+        const keyInfo = data.data?.keyUsed ? ` [Key: ${data.data.keyUsed}]` : '';
         setTranslateLogs(prev => [
-          `✓ Dịch xong ${translatedDisplay}`,
+          `✓ Dịch xong ${translatedDisplay}${keyInfo}`,
           ...prev.slice(0, 30),
         ]);
       } catch (err: unknown) {
@@ -273,8 +295,10 @@ export default function TranslationView({
           targetLang: 'Tiếng Việt',
           genre,
           glossary,
+          modelName: aiModel,
           novelId: activeNovel.id,
           chapterNumber: inspectingChapter.chapterNumber,
+          apiKeys: getActiveApiKeyStrings(),
         }),
       });
 
@@ -336,81 +360,137 @@ export default function TranslationView({
           </p>
         </div>
 
-        {/* Novel Selector Dropdown */}
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-400 shrink-0">Chọn truyện:</label>
-          <select
-            value={currentNovelId}
-            onChange={e => setInternalNovelId(e.target.value)}
-            className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-semibold text-white focus:border-indigo-500 focus:outline-none max-w-xs truncate"
-          >
-            {novels.map(n => (
-              <option key={n.id} value={n.id}>
-                {n.title} ({n.translatedChaptersCount}/{n.chaptersCount} chương)
-              </option>
-            ))}
-          </select>
+        {/* Novel Selector Dropdown & API Keys */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          {onOpenApiKeyModal && (
+            <button
+              type="button"
+              onClick={onOpenApiKeyModal}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-300 text-xs font-semibold hover:bg-amber-500/20 transition-all cursor-pointer"
+              title="Quản lý Gemini API Keys - Thêm nhiều key trực tiếp trên Web"
+            >
+              <KeyRound className="h-3.5 w-3.5 text-amber-400" />
+              <span>Gemini Keys ({activeKeysCount})</span>
+            </button>
+          )}
+
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-slate-400 shrink-0">Chọn truyện:</label>
+            <select
+              value={currentNovelId}
+              onChange={e => setInternalNovelId(e.target.value)}
+              className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-semibold text-white focus:border-indigo-500 focus:outline-none max-w-xs truncate"
+            >
+              {novels.map(n => (
+                <option key={n.id} value={n.id}>
+                  {n.title} ({n.translatedChaptersCount}/{n.chaptersCount} chương)
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
-      {/* Control Panel: Style & Glossary */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-        {/* Genre Style */}
-        <div>
-          <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-            Thể loại văn phong (Văn phong dịch AI):
-          </label>
-          <select
-            value={genre}
-            onChange={e => setSelectedGenre(e.target.value as TranslationGenre)}
-            className="w-full rounded-xl border border-slate-800 bg-slate-950 py-2 px-3 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
-          >
-            <option value="xianxia">🐉 Tiên hiệp / Kiếm hiệp (Chuẩn Hán Việt)</option>
-            <option value="lightnovel">🌸 Light Novel Nhật Bản (Dí dỏm, mượt mà)</option>
-            <option value="modern">🏙️ Đô thị / Ngôn tình / Hiện đại</option>
-            <option value="webnovel">⚔️ Kỳ ảo phương Tây / LitRPG / Sci-Fi</option>
-            <option value="general">📖 Văn học tiêu chuẩn</option>
-          </select>
+      {/* Control Panel: Style, Model, Glossary & Action */}
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* Genre Style */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              Thể loại văn phong (Prompt AI):
+            </label>
+            <select
+              value={genre}
+              onChange={e => setSelectedGenre(e.target.value as TranslationGenre)}
+              className="w-full rounded-xl border border-slate-800 bg-slate-950 py-2 px-3 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+            >
+              <option value="xianxia">🐉 Tiên hiệp / Kiếm hiệp (Chuẩn Hán Việt)</option>
+              <option value="lightnovel">🌸 Light Novel Nhật Bản (Dí dỏm, mượt mà)</option>
+              <option value="modern">🏙️ Đô thị / Ngôn tình / Hiện đại</option>
+              <option value="webnovel">⚔️ Kỳ ảo phương Tây / LitRPG / Sci-Fi</option>
+              <option value="general">📖 Văn học tiêu chuẩn</option>
+            </select>
+          </div>
+
+          {/* Model AI Select */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              Mô hình Gemini AI:
+            </label>
+            <select
+              value={aiModel}
+              onChange={e => setAiModel(e.target.value)}
+              className="w-full rounded-xl border border-slate-800 bg-slate-950 py-2 px-3 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+            >
+              <option value="gemini-3.8-flash">⚡ Gemini 3.8 Flash (Tốc độ cao & chuẩn xác)</option>
+              <option value="gemini-3.1-pro-preview">🧠 Gemini 3.1 Pro (Phân tích dịch sâu)</option>
+            </select>
+          </div>
+
+          {/* Glossary count & button */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              Từ điển thuật ngữ (Glossary):
+            </label>
+            <button
+              onClick={() => setShowGlossaryModal(!showGlossaryModal)}
+              className="flex w-full items-center justify-between rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:border-slate-700 transition-colors"
+            >
+              <span className="flex items-center gap-1.5">
+                <BookOpen className="h-3.5 w-3.5 text-amber-400" />
+                <span>{Object.keys(glossary).length} thuật ngữ đã gán</span>
+              </span>
+              <span className="text-[11px] font-semibold text-indigo-400 hover:underline">
+                {showGlossaryModal ? 'Đóng' : 'Quản lý'}
+              </span>
+            </button>
+          </div>
+
+          {/* Translation action */}
+          <div className="flex flex-col justify-end">
+            <button
+              onClick={handleStartBatchTranslate}
+              disabled={isTranslating || selectedChapterNumbers.length === 0}
+              className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 py-2 px-4 text-xs font-bold text-white shadow-lg shadow-indigo-600/30 hover:from-indigo-500 hover:to-indigo-600 disabled:opacity-50 transition-all cursor-pointer"
+            >
+              {isTranslating ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  <span>Đang dịch ({translateProgress}%)...</span>
+                </>
+              ) : (
+                <>
+                  <Play className="h-4 w-4 fill-current" />
+                  <span>Dịch các chương đã chọn ({selectedChapterNumbers.length})</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
-        {/* Glossary count & button */}
-        <div>
-          <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-            Từ điển thuật ngữ (Glossary):
-          </label>
-          <button
-            onClick={() => setShowGlossaryModal(!showGlossaryModal)}
-            className="flex w-full items-center justify-between rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:border-slate-700 transition-colors"
-          >
-            <span className="flex items-center gap-1.5">
-              <BookOpen className="h-3.5 w-3.5 text-amber-400" />
-              <span>{Object.keys(glossary).length} thuật ngữ đã gán</span>
-            </span>
-            <span className="text-[11px] font-semibold text-indigo-400 hover:underline">
-              {showGlossaryModal ? 'Đóng' : 'Quản lý'}
-            </span>
-          </button>
-        </div>
-
-        {/* Translation action */}
-        <div className="flex flex-col justify-end">
-          <button
-            onClick={handleStartBatchTranslate}
-            disabled={isTranslating || selectedChapterNumbers.length === 0}
-            className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 py-2 px-4 text-xs font-bold text-white shadow-lg shadow-indigo-600/30 hover:from-indigo-500 hover:to-indigo-600 disabled:opacity-50 transition-all"
-          >
-            {isTranslating ? (
-              <>
-                <RefreshCw className="h-4 w-4 animate-spin" />
-                <span>Đang dịch ({translateProgress}%)...</span>
-              </>
+        {/* API Key Rotation Status & Guidance Banner */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/80 text-xs">
+          <div className="flex items-center gap-2 text-slate-400">
+            <KeyRound className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+            {activeKeysCount > 0 ? (
+              <span>
+                Đang sử dụng <strong className="text-amber-400">{activeKeysCount} Custom API Key</strong> tự động xoay vòng khi gặp hạn mức 429.
+              </span>
             ) : (
-              <>
-                <Play className="h-4 w-4 fill-current" />
-                <span>Dịch các chương đã chọn ({selectedChapterNumbers.length})</span>
-              </>
+              <span>
+                Chưa thêm Custom Key (đang dùng Key hệ thống). Khuyên dùng thêm nhiều key để dịch số lượng lớn.
+              </span>
             )}
-          </button>
+          </div>
+          {onOpenApiKeyModal && (
+            <button
+              type="button"
+              onClick={onOpenApiKeyModal}
+              className="text-amber-400 hover:text-amber-300 font-semibold underline text-xs cursor-pointer"
+            >
+              + Quản lý & thêm Gemini API Keys
+            </button>
+          )}
         </div>
       </div>
 

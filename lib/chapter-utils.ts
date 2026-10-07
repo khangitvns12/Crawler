@@ -23,6 +23,17 @@ export function cleanChapterTitle(rawTitle?: string | null, fallbackNumber?: num
   // 1. Remove zero-width spaces, BOM, NBSP, and leading/trailing whitespace
   let title = rawTitle.replace(/^[\u200B\uFEFF\u00A0\s]+|[\u200B\uFEFF\u00A0\s]+$/g, '');
 
+  // 1b. Remove website breadcrumbs (e.g. "首页 > 官场职场> 霍格沃茨的学习面板 > 第1章...")
+  if (title.includes(' > ') || title.includes('>')) {
+    const parts = title.split(/\s*>\s*/);
+    if (parts.length > 1 && parts[parts.length - 1].length > 1) {
+      title = parts[parts.length - 1].trim();
+    }
+  }
+
+  // 1c. Remove trailing book titles like "-《婚后生情》" or "_书名"
+  title = title.replace(/\s*[-|_|–]\s*《[^》]+》\s*$/g, '').trim();
+
   // 2. Remove leading decorative noise (bullets, arrows, badges)
   title = title.replace(/^[\s•\-\>✓★☆#|~_]+/g, '').trim();
 

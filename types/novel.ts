@@ -12,7 +12,21 @@ export interface CookieConfig {
   userAgent?: string;
   referer?: string;
   customHeaders?: Record<string, string>;
+  customProxy?: string; // Optional user proxy / Scraper API URL
+  useProxyFallback?: boolean; // Auto-activate fallback proxy (Jina/CORS) on Cloudflare 403/503
 }
+
+export interface GeminiApiKey {
+  id: string;
+  key: string;
+  label?: string;
+  isActive: boolean;
+  status?: 'active' | 'rate_limited' | 'invalid' | 'untested';
+  lastTestedAt?: string;
+  errorMessage?: string;
+}
+
+export type KeyRotationStrategy = 'round_robin' | 'failover';
 
 export interface CrawlerConfig {
   titleSelector?: string;

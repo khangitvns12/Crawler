@@ -5,10 +5,11 @@ import { Novel, Chapter, CookieConfig, CrawlerConfig, TranslationGenre } from '@
 import { SITE_PRESETS, findPresetForUrl } from '@/lib/preset-extractors';
 import { cleanChapterTitle, cleanChapterContent, formatChapterDisplayTitle, sortChapters } from '@/lib/chapter-utils';
 import { safeFetchJson } from '@/lib/safe-json';
+import { getActiveApiKeyStrings, GEMINI_KEYS_CHANGED_EVENT } from '@/lib/api-key-storage';
 import { 
   Compass, ShieldCheck, Key, RefreshCw, AlertCircle, Play, 
   Pause, CheckCircle2, ChevronDown, ChevronUp, Globe, FileText,
-  Sliders, ArrowRight, Sparkles, ExternalLink, Languages
+  Sliders, ArrowRight, Sparkles, ExternalLink, Languages, KeyRound
 } from 'lucide-react';
 
 interface CrawlerViewProps {
@@ -16,6 +17,7 @@ interface CrawlerViewProps {
   onGoToTranslate: (novel: Novel) => void;
   resumeNovel?: Novel | null;
   onClearResumeNovel?: () => void;
+  onOpenApiKeyModal?: () => void;
 }
 
 export default function CrawlerView({
@@ -23,17 +25,33 @@ export default function CrawlerView({
   onGoToTranslate,
   resumeNovel,
   onClearResumeNovel,
+  onOpenApiKeyModal,
 }: CrawlerViewProps) {
   const [url, setUrl] = useState(resumeNovel?.sourceUrl || '');
   const [detectedPreset, setDetectedPreset] = useState<string>(() => 
     resumeNovel ? findPresetForUrl(resumeNovel.sourceUrl).id : 'generic'
   );
   
-  // Cookie Configuration
+  // Cookie & Proxy Configuration
   const [showCookiePanel, setShowCookiePanel] = useState(false);
   const [cookieString, setCookieString] = useState(resumeNovel?.cookieConfig?.cookieString || '');
   const [userAgent, setUserAgent] = useState(resumeNovel?.cookieConfig?.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
   const [referer, setReferer] = useState(resumeNovel?.cookieConfig?.referer || '');
+  const [customProxy, setCustomProxy] = useState(resumeNovel?.cookieConfig?.customProxy || '');
+
+  // Live active Gemini keys count
+  const [activeKeysCount, setActiveKeysCount] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      return getActiveApiKeyStrings().length;
+    }
+    return 0;
+  });
+
+  React.useEffect(() => {
+    const handler = () => setActiveKeysCount(getActiveApiKeyStrings().length);
+    window.addEventListener(GEMINI_KEYS_CHANGED_EVENT, handler);
+    return () => window.removeEventListener(GEMINI_KEYS_CHANGED_EVENT, handler);
+  }, []);
 
   // Pagination Configuration
   const [fetchAllPages, setFetchAllPages] = useState(true);
@@ -113,6 +131,7 @@ export default function CrawlerView({
             cookieString,
             userAgent,
             referer: referer || undefined,
+            customProxy: customProxy.trim() || undefined,
           },
         }),
       });
@@ -143,6 +162,7 @@ export default function CrawlerView({
       cookieString,
       userAgent,
       referer: referer || undefined,
+      customProxy: customProxy.trim() || undefined,
     };
 
     try {
@@ -212,6 +232,7 @@ export default function CrawlerView({
           targetLang: 'Tiếng Việt',
           genre: translationGenre,
           modelName: aiModel,
+          apiKeys: getActiveApiKeyStrings(),
         }),
       });
 
@@ -261,6 +282,7 @@ export default function CrawlerView({
       cookieString,
       userAgent,
       referer: referer || undefined,
+      customProxy: customProxy.trim() || undefined,
     };
 
     const preset = findPresetForUrl(url);
@@ -304,6 +326,7 @@ export default function CrawlerView({
               targetLang: 'Tiếng Việt',
               genre: translationGenre,
               modelName: aiModel,
+              apiKeys: getActiveApiKeyStrings(),
             }),
           });
 
@@ -450,6 +473,7 @@ export default function CrawlerView({
                 targetLang: 'Tiếng Việt',
                 genre: translationGenre,
                 modelName: aiModel,
+                apiKeys: getActiveApiKeyStrings(),
               }),
             });
 
@@ -817,6 +841,23 @@ export default function CrawlerView({
                 </div>
               </div>
 
+              {/* Custom Proxy / Cloudflare Bypasser */}
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  Máy chủ Proxy trung gian (Tùy chọn - Hữu ích khi deploy lên Cloud/GitHub/Vercel):
+                </label>
+                <input
+                  type="text"
+                  value={customProxy}
+                  onChange={e => setCustomProxy(e.target.value)}
+                  placeholder="Ví dụ: https://my-proxy.com/?url={url} hoặc endpoint Scraper API"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 py-2 px-3 text-xs text-slate-200 focus:border-amber-500 focus:outline-none"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  ✓ Hệ thống đã tích hợp cơ chế <strong>Auto-Proxy Fallback</strong> (Jina Reader & CORS proxies) tự động kích hoạt khi các website Trung Quốc (69shuba, xbiquge...) kích hoạt Cloudflare 403 đối với server đám mây. Đồng thời tự động chuẩn hóa URL <code>69suba.com</code> → <code>69shuba.com</code>.
+                </p>
+              </div>
+
               {/* Test Cookie Button & Results */}
               <div className="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <button
@@ -996,17 +1037,31 @@ export default function CrawlerView({
                   </label>
 
                   {autoTranslateOnCrawl && (
-                    <label className="flex items-center gap-2 cursor-pointer text-xs bg-slate-950/80 px-2.5 py-1.5 rounded-lg border border-slate-800">
-                      <input
-                        type="checkbox"
-                        checked={translateNovelTitle}
-                        onChange={e => setTranslateNovelTitle(e.target.checked)}
-                        className="h-3.5 w-3.5 rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-0"
-                      />
-                      <span className="text-[11px] font-medium text-amber-100">
-                        Dịch luôn cả tên truyện & tác giả sang Tiếng Việt
-                      </span>
-                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="flex items-center gap-2 cursor-pointer text-xs bg-slate-950/80 px-2.5 py-1.5 rounded-lg border border-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={translateNovelTitle}
+                          onChange={e => setTranslateNovelTitle(e.target.checked)}
+                          className="h-3.5 w-3.5 rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-0"
+                        />
+                        <span className="text-[11px] font-medium text-amber-100">
+                          Dịch luôn cả tên truyện & tác giả sang Tiếng Việt
+                        </span>
+                      </label>
+
+                      {onOpenApiKeyModal && (
+                        <button
+                          type="button"
+                          onClick={onOpenApiKeyModal}
+                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-300 text-[11px] font-semibold hover:bg-amber-500/20 transition-all cursor-pointer"
+                          title="Quản lý Custom Gemini API Keys - Thêm nhiều key để xoay vòng"
+                        >
+                          <KeyRound className="h-3 w-3 text-amber-400" />
+                          <span>Gemini Keys ({activeKeysCount})</span>
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
 

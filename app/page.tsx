@@ -11,6 +11,7 @@ import ReaderModal from '@/components/ReaderModal';
 import EpubExportModal from '@/components/EpubExportModal';
 import NovelDetailModal from '@/components/NovelDetailModal';
 import SupabaseModal from '@/components/SupabaseModal';
+import ApiKeyModal from '@/components/ApiKeyModal';
 import { safeFetchJson } from '@/lib/safe-json';
 import { motion, AnimatePresence } from 'motion/react';
 import { Compass, Sparkles, Download, Terminal, BookOpen, ChevronRight, ShieldCheck, CheckCircle2 } from 'lucide-react';
@@ -22,6 +23,7 @@ export default function Home() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncToast, setSyncToast] = useState<string | null>(null);
   const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
+  const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
 
   // Modals state
   const [readingNovel, setReadingNovel] = useState<Novel | null>(null);
@@ -198,6 +200,7 @@ export default function Home() {
         translatedChapters={totalTranslated}
         onOpenNewCrawler={() => setActiveTab('crawler')}
         onOpenSupabaseModal={() => setIsSupabaseModalOpen(true)}
+        onOpenApiKeyModal={() => setIsApiKeyModalOpen(true)}
         isSyncing={isSyncing}
       />
 
@@ -288,6 +291,7 @@ export default function Home() {
                   setSelectedTranslateNovelId(novel.id);
                   setActiveTab('translate');
                 }}
+                onOpenApiKeyModal={() => setIsApiKeyModalOpen(true)}
               />
             </motion.div>
           )}
@@ -306,6 +310,7 @@ export default function Home() {
                 onUpdateNovelGlossary={handleUpdateNovelGlossary}
                 onChapterTranslated={handleChapterTranslated}
                 onReadChapter={(novel, chapNum) => handleOpenReader(novel, chapNum)}
+                onOpenApiKeyModal={() => setIsApiKeyModalOpen(true)}
               />
             </motion.div>
           )}
@@ -384,7 +389,12 @@ export default function Home() {
         <SupabaseModal onClose={() => setIsSupabaseModalOpen(false)} />
       )}
 
-      {/* 5. Realtime Sync & Feedback Toast */}
+      {/* 5. Custom Gemini API Keys Modal */}
+      {isApiKeyModalOpen && (
+        <ApiKeyModal onClose={() => setIsApiKeyModalOpen(false)} />
+      )}
+
+      {/* 6. Realtime Sync & Feedback Toast */}
       {syncToast && (
         <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-xl border border-emerald-500/40 bg-slate-900/95 px-4 py-3 text-xs font-medium text-emerald-300 shadow-2xl shadow-emerald-500/10 backdrop-blur-md animate-in fade-in slide-in-from-bottom-2">
           <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />

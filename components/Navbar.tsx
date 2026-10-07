@@ -1,7 +1,8 @@
 'use client';
 
-import React from 'react';
-import { BookOpen, Compass, Sparkles, Terminal, BookMarked, Download } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { BookOpen, Compass, Sparkles, Terminal, BookMarked, Download, KeyRound } from 'lucide-react';
+import { getActiveApiKeyStrings, GEMINI_KEYS_CHANGED_EVENT } from '@/lib/api-key-storage';
 
 export type ActiveTab = 'library' | 'crawler' | 'translate' | 'api';
 
@@ -13,6 +14,7 @@ interface NavbarProps {
   translatedChapters: number;
   onOpenNewCrawler: () => void;
   onOpenSupabaseModal?: () => void;
+  onOpenApiKeyModal?: () => void;
   isSyncing?: boolean;
 }
 
@@ -24,8 +26,24 @@ export default function Navbar({
   translatedChapters,
   onOpenNewCrawler,
   onOpenSupabaseModal,
+  onOpenApiKeyModal,
   isSyncing = false,
 }: NavbarProps) {
+  const [activeKeysCount, setActiveKeysCount] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      return getActiveApiKeyStrings().length;
+    }
+    return 0;
+  });
+
+  useEffect(() => {
+    const handler = () => {
+      setActiveKeysCount(getActiveApiKeyStrings().length);
+    };
+    window.addEventListener(GEMINI_KEYS_CHANGED_EVENT, handler);
+    return () => window.removeEventListener(GEMINI_KEYS_CHANGED_EVENT, handler);
+  }, []);
+
   const tabs = [
     { id: 'library' as ActiveTab, label: 'Thư viện truyện', icon: BookMarked },
     { id: 'crawler' as ActiveTab, label: 'Cào truyện & Cookie VIP', icon: Compass },
@@ -80,7 +98,21 @@ export default function Navbar({
 
         {/* Quick Stats & CTA */}
         <div className="flex items-center gap-3">
-          <div className="hidden lg:flex items-center gap-4 text-xs text-slate-400 border-r border-slate-800 pr-4">
+          <div className="hidden lg:flex items-center gap-3 text-xs text-slate-400 border-r border-slate-800 pr-3">
+            <button
+              onClick={onOpenApiKeyModal}
+              className="flex items-center gap-1.5 text-amber-400 font-medium bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 px-2.5 py-1 rounded-lg text-[11px] transition-colors"
+              title="Quản lý Custom Gemini API Keys - Thêm nhiều key để xoay vòng"
+            >
+              <KeyRound className="h-3.5 w-3.5 text-amber-400" />
+              <span>Gemini Keys</span>
+              {activeKeysCount > 0 && (
+                <span className="rounded-full bg-amber-400/20 px-1.5 py-0.2 text-[10px] font-bold text-amber-300">
+                  {activeKeysCount}
+                </span>
+              )}
+            </button>
+
             <button
               onClick={onOpenSupabaseModal}
               className="flex items-center gap-1.5 text-emerald-400 font-medium bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 px-2.5 py-1 rounded-lg text-[11px] transition-colors"

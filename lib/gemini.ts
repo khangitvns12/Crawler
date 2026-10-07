@@ -2,14 +2,95 @@ import { GoogleGenAI } from '@google/genai';
 import { TranslationGenre } from '@/types/novel';
 import { cleanChapterTitle } from './chapter-utils';
 
+/**
+ * Create a GoogleGenAI client with a specific API key or environment key
+ */
+export function createGeminiClient(apiKey?: string): GoogleGenAI {
+  const effectiveKey = apiKey?.trim() || process.env.GEMINI_API_KEY;
+  if (!effectiveKey) {
+    throw new Error(
+      'Chưa cấu hình Gemini API Key. Vui lòng thêm ít nhất một API Key trong phần "Gemini API Keys" trên thanh công cụ hoặc cấu hình biến môi trường GEMINI_API_KEY.'
+    );
+  }
+  return new GoogleGenAI({
+    apiKey: effectiveKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+    },
+  });
+}
+
+// Default client using environment variable (backwards compatibility)
 export const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
+  apiKey: process.env.GEMINI_API_KEY || 'AIzaSyPlaceholderKeyForBuild',
   httpOptions: {
     headers: {
       'User-Agent': 'aistudio-build',
     },
   },
 });
+
+/**
+ * Execute a task with automatic API key rotation and failover on 429/Quota limits
+ */
+export async function executeWithKeyRotation<T>(
+  apiKeys: string[] | undefined,
+  singleKey: string | undefined,
+  taskFn: (client: GoogleGenAI, keyUsed: string) => Promise<T>
+): Promise<T> {
+  const candidateKeys: string[] = [];
+
+  if (apiKeys && Array.isArray(apiKeys)) {
+    for (const k of apiKeys) {
+      if (k && typeof k === 'string' && k.trim()) {
+        candidateKeys.push(k.trim());
+      }
+    }
+  }
+
+  if (candidateKeys.length === 0 && singleKey && singleKey.trim()) {
+    candidateKeys.push(singleKey.trim());
+  }
+
+  // Also append environment variable as final fallback if not already in pool
+  if (process.env.GEMINI_API_KEY && !candidateKeys.includes(process.env.GEMINI_API_KEY.trim())) {
+    candidateKeys.push(process.env.GEMINI_API_KEY.trim());
+  }
+
+  if (candidateKeys.length === 0) {
+    throw new Error(
+      'Không tìm thấy API Key nào khả dụng. Vui lòng vào nút "Gemini API Keys" trên giao diện để thêm ít nhất một key.'
+    );
+  }
+
+  let lastError: Error | null = null;
+
+  for (let idx = 0; idx < candidateKeys.length; idx++) {
+    const currentKey = candidateKeys[idx];
+    const client = createGeminiClient(currentKey);
+
+    try {
+      return await taskFn(client, currentKey);
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      lastError = err instanceof Error ? err : new Error(errorMsg);
+
+      const isQuotaLimit = /429|RESOURCE_EXHAUSTED|quota|rate limit|Too Many Requests/i.test(errorMsg);
+      const isInvalidKey = /API_KEY_INVALID|INVALID_ARGUMENT|unauthorized/i.test(errorMsg);
+
+      if ((isQuotaLimit || isInvalidKey) && idx < candidateKeys.length - 1) {
+        console.warn(
+          `[Gemini Rotation] Key ${idx + 1}/${candidateKeys.length} gặp sự cố (${isQuotaLimit ? 'Hết Quota/429' : 'Key Lỗi'}), tự động chuyển sang Key tiếp theo...`
+        );
+        continue;
+      }
+    }
+  }
+
+  throw lastError || new Error('Tất cả Gemini API Keys đều thất bại khi thực hiện yêu cầu.');
+}
 
 export interface TranslateOptions {
   title?: string;
@@ -19,11 +100,14 @@ export interface TranslateOptions {
   genre?: TranslationGenre;
   glossary?: Record<string, string>;
   modelName?: string;
+  apiKey?: string;
+  apiKeys?: string[];
 }
 
 export interface TranslationResult {
   translatedTitle: string;
   translatedContent: string;
+  keyUsed?: string;
 }
 
 const GENRE_PROMPTS: Record<TranslationGenre, string> = {
@@ -46,7 +130,7 @@ const GENRE_PROMPTS: Record<TranslationGenre, string> = {
 };
 
 /**
- * Translate a chapter using Gemini API
+ * Translate a chapter using Gemini API with auto key rotation
  */
 export async function translateChapter(options: TranslateOptions): Promise<TranslationResult> {
   const {
@@ -57,6 +141,8 @@ export async function translateChapter(options: TranslateOptions): Promise<Trans
     genre = 'general',
     glossary = {},
     modelName = 'gemini-3.8-flash',
+    apiKey,
+    apiKeys,
   } = options;
 
   let glossaryInstruction = '';
@@ -92,46 +178,49 @@ QUY TẮC CỐT LÕI:
 [NỘI DUNG GỐC]:
 ${content}`;
 
-  try {
-    const response = await ai.models.generateContent({
-      model: modelName,
-      contents: userPrompt,
-      config: {
-        systemInstruction,
-        temperature: 0.3,
-      },
-    });
+  return executeWithKeyRotation(apiKeys, apiKey, async (client, keyUsed) => {
+    try {
+      const response = await client.models.generateContent({
+        model: modelName,
+        contents: userPrompt,
+        config: {
+          systemInstruction,
+          temperature: 0.3,
+        },
+      });
 
-    const outputText = response.text || '';
+      const outputText = response.text || '';
 
-    // Parse the structured format
-    let translatedTitle = cleanChapterTitle(title);
-    let translatedContent = outputText;
+      // Parse the structured format
+      let translatedTitle = cleanChapterTitle(title);
+      let translatedContent = outputText;
 
-    const titleMatch = outputText.match(/===TITLE_START===([\s\S]*?)===TITLE_END===/);
-    if (titleMatch && titleMatch[1]) {
-      translatedTitle = cleanChapterTitle(titleMatch[1].trim());
+      const titleMatch = outputText.match(/===TITLE_START===([\s\S]*?)===TITLE_END===/);
+      if (titleMatch && titleMatch[1]) {
+        translatedTitle = cleanChapterTitle(titleMatch[1].trim());
+      }
+
+      const contentMatch = outputText.match(/===CONTENT_START===([\s\S]*?)===CONTENT_END===/);
+      if (contentMatch && contentMatch[1]) {
+        translatedContent = contentMatch[1].trim();
+      } else {
+        // If markers were missed by the model, clean output
+        translatedContent = outputText
+          .replace(/===TITLE_START===[\s\S]*?===TITLE_END===/g, '')
+          .replace(/===(CONTENT_START|CONTENT_END)===/g, '')
+          .trim();
+      }
+
+      return {
+        translatedTitle,
+        translatedContent,
+        keyUsed: keyUsed.substring(0, 8) + '...' + keyUsed.substring(keyUsed.length - 4),
+      };
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      throw new Error(`Lỗi dịch thuật Gemini: ${msg}`);
     }
-
-    const contentMatch = outputText.match(/===CONTENT_START===([\s\S]*?)===CONTENT_END===/);
-    if (contentMatch && contentMatch[1]) {
-      translatedContent = contentMatch[1].trim();
-    } else {
-      // If markers were missed by the model, clean output
-      translatedContent = outputText
-        .replace(/===TITLE_START===[\s\S]*?===TITLE_END===/g, '')
-        .replace(/===(CONTENT_START|CONTENT_END)===/g, '')
-        .trim();
-    }
-
-    return {
-      translatedTitle,
-      translatedContent,
-    };
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : String(error);
-    throw new Error(`Lỗi dịch thuật Gemini: ${msg}`);
-  }
+  });
 }
 
 export interface NovelMetadataTranslationOptions {
@@ -143,16 +232,19 @@ export interface NovelMetadataTranslationOptions {
   genre?: TranslationGenre;
   glossary?: Record<string, string>;
   modelName?: string;
+  apiKey?: string;
+  apiKeys?: string[];
 }
 
 export interface NovelMetadataTranslationResult {
   translatedTitle: string;
   translatedDescription?: string;
   translatedAuthor?: string;
+  keyUsed?: string;
 }
 
 /**
- * Translate novel title, author, and description using Gemini API
+ * Translate novel title, author, and description using Gemini API with auto key rotation
  */
 export async function translateNovelMetadata(
   options: NovelMetadataTranslationOptions
@@ -166,6 +258,8 @@ export async function translateNovelMetadata(
     genre = 'xianxia',
     glossary = {},
     modelName = 'gemini-3.8-flash',
+    apiKey,
+    apiKeys,
   } = options;
 
   let glossaryInstruction = '';
@@ -201,49 +295,51 @@ TÊN TRUYỆN GỐC: ${title}
 ${author ? `TÁC GIẢ GỐC: ${author}` : ''}
 ${description ? `MÔ TẢ GỐC:\n${description}` : ''}`;
 
-  try {
-    const response = await ai.models.generateContent({
-      model: modelName,
-      contents: userPrompt,
-      config: {
-        systemInstruction,
-        temperature: 0.3,
-      },
-    });
+  return executeWithKeyRotation(apiKeys, apiKey, async (client, keyUsed) => {
+    try {
+      const response = await client.models.generateContent({
+        model: modelName,
+        contents: userPrompt,
+        config: {
+          systemInstruction,
+          temperature: 0.3,
+        },
+      });
 
-    const outputText = response.text || '';
-    let translatedTitle = title;
-    let translatedAuthor = author;
-    let translatedDescription = description;
+      const outputText = response.text || '';
+      let translatedTitle = title;
+      let translatedAuthor = author;
+      let translatedDescription = description;
 
-    const titleMatch = outputText.match(/===TITLE_START===([\s\S]*?)===TITLE_END===/);
-    if (titleMatch && titleMatch[1]) {
-      translatedTitle = titleMatch[1].trim();
-    } else {
-      // Fallback: extract title from line if format was not strictly respected
-      const lines = outputText.split('\n').map(l => l.trim()).filter(Boolean);
-      if (lines.length > 0 && lines[0].length < 200) {
-        translatedTitle = lines[0].replace(/^#+\s*/, '').replace(/^[*\s]+|[*\s]+$/g, '').trim();
+      const titleMatch = outputText.match(/===TITLE_START===([\s\S]*?)===TITLE_END===/);
+      if (titleMatch && titleMatch[1]) {
+        translatedTitle = titleMatch[1].trim();
+      } else {
+        const lines = outputText.split('\n').map(l => l.trim()).filter(Boolean);
+        if (lines.length > 0 && lines[0].length < 200) {
+          translatedTitle = lines[0].replace(/^#+\s*/, '').replace(/^[*\s]+|[*\s]+$/g, '').trim();
+        }
       }
-    }
 
-    const authorMatch = outputText.match(/===AUTHOR_START===([\s\S]*?)===AUTHOR_END===/);
-    if (authorMatch && authorMatch[1]) {
-      translatedAuthor = authorMatch[1].trim();
-    }
+      const authorMatch = outputText.match(/===AUTHOR_START===([\s\S]*?)===AUTHOR_END===/);
+      if (authorMatch && authorMatch[1]) {
+        translatedAuthor = authorMatch[1].trim();
+      }
 
-    const descMatch = outputText.match(/===DESC_START===([\s\S]*?)===DESC_END===/);
-    if (descMatch && descMatch[1]) {
-      translatedDescription = descMatch[1].trim();
-    }
+      const descMatch = outputText.match(/===DESC_START===([\s\S]*?)===DESC_END===/);
+      if (descMatch && descMatch[1]) {
+        translatedDescription = descMatch[1].trim();
+      }
 
-    return {
-      translatedTitle,
-      translatedAuthor,
-      translatedDescription,
-    };
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : String(error);
-    throw new Error(`Lỗi dịch thông tin truyện Gemini: ${msg}`);
-  }
+      return {
+        translatedTitle,
+        translatedAuthor,
+        translatedDescription,
+        keyUsed: keyUsed.substring(0, 8) + '...' + keyUsed.substring(keyUsed.length - 4),
+      };
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      throw new Error(`Lỗi dịch thông tin truyện Gemini: ${msg}`);
+    }
+  });
 }

@@ -25,6 +25,8 @@ export async function POST(req: NextRequest) {
       novelId,
       chapterNumber,
       modelName,
+      apiKey,
+      apiKeys,
     } = body as {
       mode?: 'novel' | 'metadata' | 'chapter';
       title?: string;
@@ -38,6 +40,8 @@ export async function POST(req: NextRequest) {
       novelId?: string;
       chapterNumber?: number;
       modelName?: string;
+      apiKey?: string;
+      apiKeys?: string[];
     };
 
     // Mode 1: Translate Novel Title & Metadata
@@ -55,6 +59,8 @@ export async function POST(req: NextRequest) {
         genre,
         glossary,
         modelName,
+        apiKey,
+        apiKeys,
       });
 
       // If novelId is provided, optionally update existing novel in storage
@@ -93,6 +99,8 @@ export async function POST(req: NextRequest) {
       genre,
       glossary,
       modelName,
+      apiKey,
+      apiKeys,
     });
 
     // If novelId & chapterNumber supplied, persist to server storage
