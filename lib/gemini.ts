@@ -14,26 +14,99 @@ export function createGeminiClient(apiKey?: string): GoogleGenAI {
   }
   return new GoogleGenAI({
     apiKey: effectiveKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
   });
 }
 
 // Default client using environment variable (backwards compatibility)
 export const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || 'AIzaSyPlaceholderKeyForBuild',
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    },
-  },
 });
 
+export const DEFAULT_FLASH_MODEL = 'gemini-3.1-flash-lite';
+
+export const FALLBACK_MODELS = [
+  'gemini-3.1-flash-lite',
+  'gemini-flash-latest',
+  'gemini-3.8-flash',
+  'gemini-3.1-pro-preview',
+];
+
 /**
- * Execute a task with automatic API key rotation and failover on 429/Quota limits
+ * Normalizes deprecated model names to modern equivalents
+ */
+function normalizeModelName(rawModel?: string): string {
+  if (!rawModel || !rawModel.trim()) return DEFAULT_FLASH_MODEL;
+  const m = rawModel.trim();
+  // Deprecated models in Google GenAI SDK
+  if (/gemini-(1\.5|2\.0|2\.5)/i.test(m)) {
+    return DEFAULT_FLASH_MODEL;
+  }
+  return m;
+}
+
+/**
+ * Executes a generateContent call with automatic model failover if the primary model is busy (503), deprecated, or missing
+ */
+export async function generateContentWithModelFallback(
+  client: GoogleGenAI,
+  preferredModel: string | undefined,
+  requestConfig: {
+    contents: string;
+    config?: {
+      systemInstruction?: string;
+      temperature?: number;
+      maxOutputTokens?: number;
+    };
+  }
+): Promise<{ text: string; modelUsed: string }> {
+  const candidateModels: string[] = [];
+  const normalizedPreferred = normalizeModelName(preferredModel);
+
+  if (normalizedPreferred) {
+    candidateModels.push(normalizedPreferred);
+  }
+
+  for (const m of FALLBACK_MODELS) {
+    if (!candidateModels.includes(m)) {
+      candidateModels.push(m);
+    }
+  }
+
+  let lastError: Error | null = null;
+
+  for (let i = 0; i < candidateModels.length; i++) {
+    const model = candidateModels[i];
+    try {
+      const response = await client.models.generateContent({
+        model,
+        contents: requestConfig.contents,
+        config: requestConfig.config,
+      });
+
+      return {
+        text: response.text || '',
+        modelUsed: model,
+      };
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      lastError = err instanceof Error ? err : new Error(errorMsg);
+
+      const isModelError = /404|NOT_FOUND|no longer available|503|UNAVAILABLE|high demand|overloaded|spikes in demand|429|RESOURCE_EXHAUSTED|quota/i.test(errorMsg);
+      if (isModelError && i < candidateModels.length - 1) {
+        console.warn(`[Gemini Model Fallback] Model "${model}" gặp sự cố (${errorMsg.slice(0, 100)}), tự động chuyển sang "${candidateModels[i + 1]}"...`);
+        continue;
+      }
+
+      // If last candidate or unrecoverable error, rethrow so executeWithKeyRotation can handle
+      throw lastError;
+    }
+  }
+
+  throw lastError || new Error('Không thể tạo nội dung từ các mô hình Gemini khả dụng.');
+}
+
+/**
+ * Execute a task with automatic API key rotation and failover on 429/Quota limits or unavailable models
  */
 export async function executeWithKeyRotation<T>(
   apiKeys: string[] | undefined,
@@ -79,10 +152,13 @@ export async function executeWithKeyRotation<T>(
 
       const isQuotaLimit = /429|RESOURCE_EXHAUSTED|quota|rate limit|Too Many Requests/i.test(errorMsg);
       const isInvalidKey = /API_KEY_INVALID|INVALID_ARGUMENT|unauthorized/i.test(errorMsg);
+      const isUnavailable = /503|UNAVAILABLE|high demand|overloaded/i.test(errorMsg);
 
-      if ((isQuotaLimit || isInvalidKey) && idx < candidateKeys.length - 1) {
+      if ((isQuotaLimit || isInvalidKey || isUnavailable) && idx < candidateKeys.length - 1) {
         console.warn(
-          `[Gemini Rotation] Key ${idx + 1}/${candidateKeys.length} gặp sự cố (${isQuotaLimit ? 'Hết Quota/429' : 'Key Lỗi'}), tự động chuyển sang Key tiếp theo...`
+          `[Gemini Rotation] Key ${idx + 1}/${candidateKeys.length} gặp sự cố (${
+            isQuotaLimit ? 'Hết Quota/429' : isUnavailable ? '503 Quá tải' : 'Key Lỗi'
+          }), tự động chuyển sang Key tiếp theo...`
         );
         continue;
       }
@@ -130,7 +206,7 @@ const GENRE_PROMPTS: Record<TranslationGenre, string> = {
 };
 
 /**
- * Translate a chapter using Gemini API with auto key rotation
+ * Translate a chapter using Gemini API with auto key rotation and model fallback
  */
 export async function translateChapter(options: TranslateOptions): Promise<TranslationResult> {
   const {
@@ -140,7 +216,7 @@ export async function translateChapter(options: TranslateOptions): Promise<Trans
     targetLang = 'Tiếng Việt',
     genre = 'general',
     glossary = {},
-    modelName = 'gemini-3.8-flash',
+    modelName = DEFAULT_FLASH_MODEL,
     apiKey,
     apiKeys,
   } = options;
@@ -180,16 +256,17 @@ ${content}`;
 
   return executeWithKeyRotation(apiKeys, apiKey, async (client, keyUsed) => {
     try {
-      const response = await client.models.generateContent({
-        model: modelName,
-        contents: userPrompt,
-        config: {
-          systemInstruction,
-          temperature: 0.3,
-        },
-      });
-
-      const outputText = response.text || '';
+      const { text: outputText, modelUsed } = await generateContentWithModelFallback(
+        client,
+        modelName || DEFAULT_FLASH_MODEL,
+        {
+          contents: userPrompt,
+          config: {
+            systemInstruction,
+            temperature: 0.3,
+          },
+        }
+      );
 
       // Parse the structured format
       let translatedTitle = cleanChapterTitle(title);
@@ -214,7 +291,7 @@ ${content}`;
       return {
         translatedTitle,
         translatedContent,
-        keyUsed: keyUsed.substring(0, 8) + '...' + keyUsed.substring(keyUsed.length - 4),
+        keyUsed: `${keyUsed.substring(0, 8)}...${keyUsed.substring(keyUsed.length - 4)} (${modelUsed})`,
       };
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -244,7 +321,7 @@ export interface NovelMetadataTranslationResult {
 }
 
 /**
- * Translate novel title, author, and description using Gemini API with auto key rotation
+ * Translate novel title, author, and description using Gemini API with auto key rotation and model fallback
  */
 export async function translateNovelMetadata(
   options: NovelMetadataTranslationOptions
@@ -257,7 +334,7 @@ export async function translateNovelMetadata(
     targetLang = 'Tiếng Việt',
     genre = 'xianxia',
     glossary = {},
-    modelName = 'gemini-3.8-flash',
+    modelName = DEFAULT_FLASH_MODEL,
     apiKey,
     apiKeys,
   } = options;
@@ -297,16 +374,18 @@ ${description ? `MÔ TẢ GỐC:\n${description}` : ''}`;
 
   return executeWithKeyRotation(apiKeys, apiKey, async (client, keyUsed) => {
     try {
-      const response = await client.models.generateContent({
-        model: modelName,
-        contents: userPrompt,
-        config: {
-          systemInstruction,
-          temperature: 0.3,
-        },
-      });
+      const { text: outputText, modelUsed } = await generateContentWithModelFallback(
+        client,
+        modelName || DEFAULT_FLASH_MODEL,
+        {
+          contents: userPrompt,
+          config: {
+            systemInstruction,
+            temperature: 0.3,
+          },
+        }
+      );
 
-      const outputText = response.text || '';
       let translatedTitle = title;
       let translatedAuthor = author;
       let translatedDescription = description;
@@ -335,7 +414,7 @@ ${description ? `MÔ TẢ GỐC:\n${description}` : ''}`;
         translatedTitle,
         translatedAuthor,
         translatedDescription,
-        keyUsed: keyUsed.substring(0, 8) + '...' + keyUsed.substring(keyUsed.length - 4),
+        keyUsed: `${keyUsed.substring(0, 8)}...${keyUsed.substring(keyUsed.length - 4)} (${modelUsed})`,
       };
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);

@@ -54,7 +54,7 @@ export default function TranslationView({
   // Translation configuration
   const [selectedGenre, setSelectedGenre] = useState<TranslationGenre | null>(null);
   const genre = selectedGenre ?? ((activeNovel?.translationGenre as TranslationGenre) || 'xianxia');
-  const [aiModel, setAiModel] = useState<string>('gemini-3.8-flash');
+  const [aiModel, setAiModel] = useState<string>('gemini-3.1-flash-lite');
   const [selectedChapterNumbers, setSelectedChapterNumbers] = useState<number[]>([]);
 
   // Glossary Manager State
@@ -422,7 +422,9 @@ export default function TranslationView({
               onChange={e => setAiModel(e.target.value)}
               className="w-full rounded-xl border border-slate-800 bg-slate-950 py-2 px-3 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
             >
-              <option value="gemini-3.8-flash">⚡ Gemini 3.8 Flash (Tốc độ cao & chuẩn xác)</option>
+              <option value="gemini-3.1-flash-lite">⚡ Gemini 3.1 Flash Lite (Khuyên dùng - Nhanh, ổn định)</option>
+              <option value="gemini-flash-latest">🌟 Gemini Flash Latest (Bản mới nhất)</option>
+              <option value="gemini-3.8-flash">⚡ Gemini 3.8 Flash (Tốc độ cao)</option>
               <option value="gemini-3.1-pro-preview">🧠 Gemini 3.1 Pro (Phân tích dịch sâu)</option>
             </select>
           </div>
