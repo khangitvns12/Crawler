@@ -562,7 +562,7 @@ function detectPaginationPages(
   $: cheerio.CheerioAPI,
   config: CrawlerConfig,
   initialUrl: string,
-  maxPages: number = 150
+  maxPages: number = 500
 ): { pageUrls: string[]; totalPages: number } {
   const pageUrls: string[] = [];
   let detectedTotalPages = 1;
@@ -654,7 +654,7 @@ function detectPaginationPages(
       const numMatch = href.match(/(\d+)/g);
       if (numMatch) {
         const lastNum = parseInt(numMatch[numMatch.length - 1], 10);
-        if (lastNum > detectedTotalPages && lastNum < 2000) {
+        if (lastNum > detectedTotalPages && lastNum < 25000) {
           detectedTotalPages = lastNum;
         }
       }
@@ -863,7 +863,7 @@ export async function inspectNovel(
   }
 
   // 6. Multi-page Pagination Handling (for TruyenFull, Metruyenchu, etc.)
-  const maxPagesToFetch = options?.maxPages ?? 150;
+  const maxPagesToFetch = options?.maxPages ?? 500;
   const { pageUrls, totalPages } = detectPaginationPages($, config, activeBaseUrl, maxPagesToFetch);
 
   // Fast chunked parallel fetching with concurrency of 6 pages at a time

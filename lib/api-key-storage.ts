@@ -170,3 +170,110 @@ export function saveStoredRotationStrategy(strategy: KeyRotationStrategy): void 
     localStorage.setItem(STORAGE_STRATEGY_KEY, strategy);
   } catch {}
 }
+
+/**
+ * Persist an API key directly to Supabase via server API route
+ */
+export async function persistApiKeyToSupabase(key: GeminiApiKey): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  try {
+    const res = await fetch('/api/keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key }),
+    });
+    const data = await res.json();
+    return Boolean(data?.success);
+  } catch (err) {
+    console.warn('persistApiKeyToSupabase error:', err);
+    return false;
+  }
+}
+
+/**
+ * Persist a list of API keys to Supabase via server API route
+ */
+export async function persistAllApiKeysToSupabase(keys: GeminiApiKey[]): Promise<boolean> {
+  if (typeof window === 'undefined' || keys.length === 0) return false;
+  try {
+    const res = await fetch('/api/keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keys }),
+    });
+    const data = await res.json();
+    return Boolean(data?.success);
+  } catch (err) {
+    console.warn('persistAllApiKeysToSupabase error:', err);
+    return false;
+  }
+}
+
+/**
+ * Delete an API key from Supabase
+ */
+export async function deleteApiKeyFromSupabase(id: string): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  try {
+    const res = await fetch(`/api/keys?id=${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    const data = await res.json();
+    return Boolean(data?.success);
+  } catch (err) {
+    console.warn('deleteApiKeyFromSupabase error:', err);
+    return false;
+  }
+}
+
+/**
+ * Synchronize API keys between Supabase and localStorage
+ * Fetches remote keys, merges them with local keys, and stores the merged list in both
+ */
+export async function syncApiKeysFromSupabase(): Promise<GeminiApiKey[]> {
+  if (typeof window === 'undefined') return [];
+  try {
+    const res = await fetch('/api/keys');
+    if (!res.ok) return getStoredApiKeys();
+    const result = await res.json();
+    const remoteKeys: GeminiApiKey[] = Array.isArray(result?.data) ? result.data : [];
+
+    const localKeys = getStoredApiKeys();
+
+    if (remoteKeys.length === 0 && localKeys.length > 0) {
+      // If remote is empty, push local keys to remote
+      await persistAllApiKeysToSupabase(localKeys);
+      return localKeys;
+    }
+
+    if (remoteKeys.length > 0) {
+      // Merge remote with local, preferring most recently tested
+      const keyMap = new Map<string, GeminiApiKey>();
+      // 1. Put local keys first
+      for (const lk of localKeys) {
+        keyMap.set(lk.key, lk);
+      }
+      // 2. Overlay remote keys
+      for (const rk of remoteKeys) {
+        const existing = keyMap.get(rk.key);
+        if (!existing) {
+          keyMap.set(rk.key, rk);
+        } else {
+          // If remote was tested more recently or has active status, update existing
+          if (rk.status === 'active' || (rk.lastTestedAt && (!existing.lastTestedAt || rk.lastTestedAt > existing.lastTestedAt))) {
+            keyMap.set(rk.key, { ...existing, ...rk });
+          }
+        }
+      }
+
+      const merged = Array.from(keyMap.values());
+      saveStoredApiKeys(merged);
+      return merged;
+    }
+  } catch (err) {
+    console.warn('syncApiKeysFromSupabase error:', err);
+  }
+
+  return getStoredApiKeys();
+}
+

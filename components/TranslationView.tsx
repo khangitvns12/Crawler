@@ -7,7 +7,8 @@ import { safeFetchJson } from '@/lib/safe-json';
 import { getActiveApiKeyStrings, GEMINI_KEYS_CHANGED_EVENT } from '@/lib/api-key-storage';
 import { 
   Sparkles, BookOpen, CheckCircle2, Clock, AlertCircle, RefreshCw, 
-  Save, Play, Sliders, Plus, Trash2, Edit3, Eye, FileText, KeyRound
+  Save, Play, Sliders, Plus, Trash2, Edit3, Eye, FileText, KeyRound,
+  Search
 } from 'lucide-react';
 
 interface TranslationViewProps {
@@ -49,7 +50,8 @@ export default function TranslationView({
 
   // Chapters list for active novel
   const [chapters, setChapters] = useState<Chapter[]>([]);
-  const [isLoadingChapters, setIsLoadingChapters] = useState(false);
+  const [loadedNovelId, setLoadedNovelId] = useState<string>('');
+  const isLoadingChapters = Boolean(currentNovelId && loadedNovelId !== currentNovelId);
 
   // Translation configuration
   const [selectedGenre, setSelectedGenre] = useState<TranslationGenre | null>(null);
@@ -77,19 +79,43 @@ export default function TranslationView({
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState(false);
 
-  const handleSelectInspectChapter = (ch: Chapter) => {
+  // Controls for large collections (supporting up to 10,000 chapters)
+  const [transSearch, setTransSearch] = useState('');
+  const [transStatusFilter, setTransStatusFilter] = useState<'all' | 'pending' | 'translated'>('all');
+  const [rangeFrom, setRangeFrom] = useState<string>('');
+  const [rangeTo, setRangeTo] = useState<string>('');
+  const [transChunkIndex, setTransChunkIndex] = useState(0);
+  const TRANS_CHUNK_SIZE = 200;
+
+  const handleSelectInspectChapter = React.useCallback(async (ch: Chapter) => {
     setInspectingChapter(ch);
     setEditedTitle(ch.translatedTitle || ch.title);
     setEditedContent(ch.translatedContent || ch.rawContent || '');
     setSaveSuccessMsg(false);
-  };
 
-  // Fetch chapters when active novel changes
+    // If chapter text was not yet loaded (lightweight headers), fetch full content
+    if (!ch.rawContent && !ch.translatedContent && activeNovel) {
+      try {
+        const { ok, data } = await safeFetchJson<any>(`/api/novels/${activeNovel.id}/chapters/${ch.chapterNumber}`);
+        if (ok && data?.data) {
+          const full = data.data;
+          setInspectingChapter(full);
+          setEditedTitle(full.translatedTitle || full.title);
+          setEditedContent(full.translatedContent || full.rawContent || '');
+          setChapters(prev => prev.map(c => c.chapterNumber === ch.chapterNumber ? { ...c, ...full } : c));
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }, [activeNovel]);
+
+  // Fetch chapters when active novel changes (using lightweight headers for rapid 10,000-chapter support)
   useEffect(() => {
     if (!currentNovelId) return;
     let cancelled = false;
 
-    safeFetchJson<any>(`/api/novels/${currentNovelId}/chapters`)
+    safeFetchJson<any>(`/api/novels/${currentNovelId}/chapters?headersOnly=true`)
       .then(({ ok, data }) => {
         if (!cancelled && ok && data?.success && Array.isArray(data.data)) {
           const sorted = [...data.data].sort((a, b) => a.chapterNumber - b.chapterNumber);
@@ -101,13 +127,28 @@ export default function TranslationView({
       })
       .catch(() => {})
       .finally(() => {
-        if (!cancelled) setIsLoadingChapters(false);
+        if (!cancelled) setLoadedNovelId(currentNovelId);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [currentNovelId]);
+  }, [currentNovelId, handleSelectInspectChapter]);
+
+  // Select range of chapters (e.g. from 1000 to 1050)
+  const handleSelectRange = () => {
+    const from = parseInt(rangeFrom, 10);
+    const to = parseInt(rangeTo, 10);
+    if (isNaN(from) || isNaN(to) || from > to) return;
+    const numsInRange = chapters
+      .filter(c => c.chapterNumber >= from && c.chapterNumber <= to)
+      .map(c => c.chapterNumber);
+    setSelectedChapterNumbers(prev => {
+      const set = new Set(prev);
+      numsInRange.forEach(n => set.add(n));
+      return Array.from(set);
+    });
+  };
 
   // Toggle chapter selection
   const handleToggleSelectChapter = (num: number) => {
@@ -218,12 +259,20 @@ export default function TranslationView({
       ]);
 
       try {
+        let rawContentToTranslate = ch.rawContent;
+        if (!rawContentToTranslate) {
+          const { ok: cOk, data: cData } = await safeFetchJson<any>(`/api/novels/${activeNovel.id}/chapters/${chapNum}`);
+          if (cOk && cData?.data?.rawContent) {
+            rawContentToTranslate = cData.data.rawContent;
+          }
+        }
+
         const { ok, data, error } = await safeFetchJson<any>('/api/translate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             title: ch.title,
-            content: ch.rawContent,
+            content: rawContentToTranslate || '',
             sourceLang: activeNovel.originalLanguage,
             targetLang: 'Tiếng Việt',
             genre,
@@ -558,11 +607,14 @@ export default function TranslationView({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Left Column: Chapters List & Selection (4 cols) */}
         <div className="lg:col-span-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 flex flex-col h-[750px]">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+          <div className="flex items-center justify-between pb-2.5 border-b border-slate-800">
             <div>
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">
                 Danh sách chương ({chapters.length})
               </h3>
+              <span className="text-[10px] text-amber-400 font-medium">
+                Đã chọn: {selectedChapterNumbers.length} chương
+              </span>
             </div>
             <div className="flex items-center gap-1 text-[11px]">
               <button
@@ -581,18 +633,132 @@ export default function TranslationView({
             </div>
           </div>
 
+          {/* Range Selection Box (Quick selection across up to 10,000 chapters) */}
+          <div className="py-2 border-b border-slate-800 space-y-2 text-xs">
+            <div className="flex items-center gap-1.5 bg-slate-950/80 p-1.5 rounded-xl border border-slate-800">
+              <span className="text-[11px] text-slate-400 shrink-0">Từ ch:</span>
+              <input
+                type="number"
+                placeholder="1"
+                value={rangeFrom}
+                onChange={e => setRangeFrom(e.target.value)}
+                className="w-14 rounded-lg border border-slate-800 bg-slate-900 px-1.5 py-0.5 text-center text-xs text-white focus:outline-none"
+              />
+              <span className="text-[11px] text-slate-400 shrink-0">đến:</span>
+              <input
+                type="number"
+                placeholder={chapters.length.toString()}
+                value={rangeTo}
+                onChange={e => setRangeTo(e.target.value)}
+                className="w-16 rounded-lg border border-slate-800 bg-slate-900 px-1.5 py-0.5 text-center text-xs text-white focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={handleSelectRange}
+                className="ml-auto rounded-lg bg-indigo-600/30 border border-indigo-500/40 px-2 py-0.5 text-[11px] font-semibold text-indigo-300 hover:bg-indigo-600/50 transition-colors"
+              >
+                Chọn dải
+              </button>
+            </div>
+
+            {/* Filter Tabs & Search */}
+            <div className="flex items-center justify-between gap-1 text-[10px]">
+              <div className="flex items-center gap-1 bg-slate-950 p-0.5 rounded-lg border border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setTransStatusFilter('all')}
+                  className={`px-2 py-0.5 rounded font-medium ${transStatusFilter === 'all' ? 'bg-slate-800 text-white' : 'text-slate-400'}`}
+                >
+                  Tất cả
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTransStatusFilter('pending')}
+                  className={`px-2 py-0.5 rounded font-medium ${transStatusFilter === 'pending' ? 'bg-amber-500/20 text-amber-300' : 'text-slate-400'}`}
+                >
+                  Chưa dịch ({chapters.filter(c => c.translationStatus !== 'translated').length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTransStatusFilter('translated')}
+                  className={`px-2 py-0.5 rounded font-medium ${transStatusFilter === 'translated' ? 'bg-emerald-500/20 text-emerald-300' : 'text-slate-400'}`}
+                >
+                  Đã dịch ({chapters.filter(c => c.translationStatus === 'translated').length})
+                </button>
+              </div>
+
+              {/* Chunk selector if chapters > TRANS_CHUNK_SIZE */}
+              {chapters.length > TRANS_CHUNK_SIZE && !transSearch.trim() && (
+                <select
+                  value={transChunkIndex}
+                  onChange={e => setTransChunkIndex(parseInt(e.target.value, 10))}
+                  className="rounded border border-slate-800 bg-slate-950 px-1.5 py-0.5 text-[10px] text-slate-300 focus:outline-none cursor-pointer"
+                >
+                  {Array.from({ length: Math.ceil(chapters.length / TRANS_CHUNK_SIZE) }).map((_, idx) => {
+                    const start = idx * TRANS_CHUNK_SIZE + 1;
+                    const end = Math.min((idx + 1) * TRANS_CHUNK_SIZE, chapters.length);
+                    return (
+                      <option key={idx} value={idx}>
+                        Ch {start}-{end}
+                      </option>
+                    );
+                  })}
+                </select>
+              )}
+            </div>
+
+            {/* Search input */}
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-500" />
+              <input
+                type="text"
+                placeholder="Lọc số chương hoặc tên..."
+                value={transSearch}
+                onChange={e => setTransSearch(e.target.value)}
+                className="w-full rounded-lg border border-slate-800 bg-slate-950 pl-8 pr-2.5 py-1 text-xs text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+              />
+            </div>
+          </div>
+
           {/* Chapters Scrollable List */}
           <div className="flex-1 overflow-y-auto py-2 space-y-1.5 pr-1 scrollbar-thin">
             {isLoadingChapters ? (
               <div className="flex items-center justify-center py-12 text-xs text-slate-400">
-                <RefreshCw className="h-4 w-4 animate-spin mr-2" /> Đang tải danh sách chương...
+                <RefreshCw className="h-4 w-4 animate-spin mr-2" /> Đang tải danh sách {chapters.length || '...'} chương...
               </div>
             ) : chapters.length === 0 ? (
               <div className="text-center py-12 text-xs text-slate-500">
                 Chưa có chương nào.
               </div>
-            ) : (
-              chapters.map(ch => {
+            ) : (() => {
+              let list = chapters;
+              if (transStatusFilter === 'translated') {
+                list = list.filter(c => c.translationStatus === 'translated');
+              } else if (transStatusFilter === 'pending') {
+                list = list.filter(c => c.translationStatus !== 'translated');
+              }
+
+              if (transSearch.trim()) {
+                const term = transSearch.trim().toLowerCase();
+                list = list.filter(c =>
+                  c.chapterNumber.toString().includes(term) ||
+                  c.title.toLowerCase().includes(term) ||
+                  (c.translatedTitle && c.translatedTitle.toLowerCase().includes(term))
+                );
+              } else if (chapters.length > TRANS_CHUNK_SIZE) {
+                const start = transChunkIndex * TRANS_CHUNK_SIZE;
+                list = list.slice(start, start + TRANS_CHUNK_SIZE);
+              }
+
+              if (list.length === 0) {
+                return (
+                  <div className="text-center py-8 text-xs text-slate-500">
+                    Không có chương nào phù hợp với bộ lọc.
+                  </div>
+                );
+              }
+
+              return list.map(ch => {
                 const isSelected = selectedChapterNumbers.includes(ch.chapterNumber);
                 const isInspecting = inspectingChapter?.chapterNumber === ch.chapterNumber;
                 const isTranslated = ch.translationStatus === 'translated';
@@ -616,7 +782,7 @@ export default function TranslationView({
                           e.stopPropagation();
                           handleToggleSelectChapter(ch.chapterNumber);
                         }}
-                        className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-0 shrink-0"
+                        className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-0 shrink-0 cursor-pointer"
                       />
                       <div className="truncate">
                         <div className="font-semibold truncate">
@@ -641,8 +807,8 @@ export default function TranslationView({
                     </div>
                   </div>
                 );
-              })
-            )}
+              });
+            })()}
           </div>
         </div>
 

@@ -10,6 +10,7 @@ import {
   saveSupabaseNovel, 
   deleteSupabaseNovel, 
   fetchSupabaseChapters, 
+  fetchSupabaseChapter,
   saveSupabaseChapters 
 } from './supabase';
 
@@ -606,16 +607,24 @@ class ServerStorage {
     return sanitizeChapters(list);
   }
 
-  public async getChaptersAsync(novelId: string): Promise<Chapter[]> {
+  public async getChaptersAsync(novelId: string, forceRefresh: boolean = false): Promise<Chapter[]> {
     let list = this.getChapters(novelId);
-    if (list.length > 0) return sanitizeChapters(list);
+    const expectedCount = this.state.novels[novelId]?.chaptersCount || 0;
 
-    // Fallback 1: check Supabase
+    // Return cached chapters only if not forcing refresh, not empty, and cached count matches or exceeds expected count
+    if (!forceRefresh && list.length > 0 && (expectedCount === 0 || list.length >= expectedCount)) {
+      return sanitizeChapters(list);
+    }
+
+    // Fallback 1: check Supabase (supports up to 10,000+ chapters via chunked range pagination)
     if (isSupabaseConfigured()) {
       try {
         const remote = await fetchSupabaseChapters(novelId);
         if (remote && remote.length > 0) {
           this.state.chapters[novelId] = remote;
+          if (this.state.novels[novelId] && remote.length > (this.state.novels[novelId].chaptersCount || 0)) {
+            this.state.novels[novelId].chaptersCount = remote.length;
+          }
           this.saveState();
           return remote;
         }
@@ -649,6 +658,27 @@ class ServerStorage {
   public getChapter(novelId: string, chapterNumber: number): Chapter | null {
     const chapters = this.getChapters(novelId);
     return chapters.find(c => c.chapterNumber === chapterNumber) || null;
+  }
+
+  public async getChapterAsync(novelId: string, chapterNumber: number): Promise<Chapter | null> {
+    const cached = this.getChapter(novelId, chapterNumber);
+    if (cached) return cached;
+
+    if (isSupabaseConfigured()) {
+      try {
+        const remote = await fetchSupabaseChapter(novelId, chapterNumber);
+        if (remote) {
+          if (!this.state.chapters[novelId]) this.state.chapters[novelId] = [];
+          this.state.chapters[novelId].push(remote);
+          this.state.chapters[novelId].sort((a, b) => a.chapterNumber - b.chapterNumber);
+          return remote;
+        }
+      } catch (e) {
+        console.warn('Supabase getChapterAsync warning:', e);
+      }
+    }
+
+    return null;
   }
 
   private async saveChapterToFirestore(chapter: Chapter): Promise<void> {

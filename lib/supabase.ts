@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { Novel, Chapter } from '@/types/novel';
+import { Novel, Chapter, GeminiApiKey } from '@/types/novel';
 import { sanitizeChapter, sanitizeChapters } from './chapter-utils';
 
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -197,6 +197,35 @@ export function supabaseRowToChapter(row: any): Chapter {
 }
 
 // -------------------------------------------------------------
+// Gemini API Keys Converters
+// -------------------------------------------------------------
+
+export function geminiKeyToSupabaseRow(k: GeminiApiKey) {
+  return {
+    id: k.id,
+    key: k.key.trim(),
+    label: (k.label || 'API Key').slice(0, 100),
+    is_active: k.isActive !== undefined ? k.isActive : true,
+    status: k.status || 'untested',
+    last_tested_at: k.lastTestedAt || null,
+    error_message: k.errorMessage ? k.errorMessage.slice(0, 1000) : null,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function supabaseRowToGeminiKey(row: any): GeminiApiKey {
+  return {
+    id: row.id,
+    key: row.key,
+    label: row.label || 'API Key',
+    isActive: row.is_active !== undefined ? Boolean(row.is_active) : true,
+    status: row.status || 'untested',
+    lastTestedAt: row.last_tested_at || undefined,
+    errorMessage: row.error_message || undefined,
+  };
+}
+
+// -------------------------------------------------------------
 // Database Operations Helper
 // -------------------------------------------------------------
 
@@ -218,7 +247,10 @@ export async function fetchSupabaseNovels(): Promise<Novel[]> {
     return [];
   }
 
-  return (data || []).map(supabaseRowToNovel);
+  // Filter out internal system rows like '__system_gemini_keys'
+  return (data || [])
+    .filter((row: any) => !row.id.startsWith('__system_'))
+    .map(supabaseRowToNovel);
 }
 
 export async function saveSupabaseNovel(novel: Novel): Promise<boolean> {
@@ -241,6 +273,7 @@ export async function saveSupabaseNovel(novel: Novel): Promise<boolean> {
 }
 
 export async function deleteSupabaseNovel(id: string): Promise<boolean> {
+  if (id.startsWith('__system_')) return false;
   const client = getSupabaseClient();
   if (!client) return false;
 
@@ -265,23 +298,123 @@ export async function deleteSupabaseNovel(id: string): Promise<boolean> {
   }
 }
 
+/**
+ * Fetch all chapters of a novel from Supabase using chunked range pagination
+ * Overcomes PostgREST's default 1000-row limit, supporting up to 10,000+ chapters!
+ */
 export async function fetchSupabaseChapters(novelId: string): Promise<Chapter[]> {
   const client = getSupabaseClient();
   if (!client) return [];
 
-  const { data, error } = await client
-    .from('chapters')
-    .select('*')
-    .eq('novel_id', novelId)
-    .order('chapter_number', { ascending: true });
+  const CHUNK_SIZE = 1000;
+  let allChapters: Chapter[] = [];
+  let from = 0;
+  let hasMore = true;
 
-  if (error) {
-    if (isTableNotFoundError(error)) return [];
-    console.warn('Supabase fetch chapters note:', error.message);
-    return [];
+  while (hasMore) {
+    const { data, error } = await client
+      .from('chapters')
+      .select('*')
+      .eq('novel_id', novelId)
+      .order('chapter_number', { ascending: true })
+      .range(from, from + CHUNK_SIZE - 1);
+
+    if (error) {
+      if (isTableNotFoundError(error)) return [];
+      console.warn('Supabase fetch chapters note:', error.message);
+      break;
+    }
+
+    if (!data || data.length === 0) {
+      break;
+    }
+
+    for (const row of data) {
+      allChapters.push(supabaseRowToChapter(row));
+    }
+
+    if (data.length < CHUNK_SIZE) {
+      hasMore = false;
+    } else {
+      from += CHUNK_SIZE;
+      // Safety limit up to 50,000 chapters
+      if (from >= 50000) {
+        hasMore = false;
+      }
+    }
   }
 
-  return sanitizeChapters((data || []).map(supabaseRowToChapter));
+  return sanitizeChapters(allChapters);
+}
+
+/**
+ * Fetch lightweight chapter metadata headers (without heavy raw/translated contents)
+ * Optimized for table of contents, progress tracking and chapter navigation in 10,000-chapter novels
+ */
+export async function fetchSupabaseChapterHeaders(novelId: string): Promise<Chapter[]> {
+  const client = getSupabaseClient();
+  if (!client) return [];
+
+  const CHUNK_SIZE = 1000;
+  let allChapters: Chapter[] = [];
+  let from = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const { data, error } = await client
+      .from('chapters')
+      .select('id, novel_id, chapter_number, title, translated_title, source_url, translation_status, translation_error, translated_at, word_count, created_at')
+      .eq('novel_id', novelId)
+      .order('chapter_number', { ascending: true })
+      .range(from, from + CHUNK_SIZE - 1);
+
+    if (error) {
+      if (isTableNotFoundError(error)) return [];
+      console.warn('Supabase fetch chapter headers note:', error.message);
+      break;
+    }
+
+    if (!data || data.length === 0) {
+      break;
+    }
+
+    for (const row of data) {
+      allChapters.push(supabaseRowToChapter(row));
+    }
+
+    if (data.length < CHUNK_SIZE) {
+      hasMore = false;
+    } else {
+      from += CHUNK_SIZE;
+      if (from >= 50000) {
+        hasMore = false;
+      }
+    }
+  }
+
+  return sanitizeChapters(allChapters);
+}
+
+/**
+ * Fetch a single chapter with full text content
+ */
+export async function fetchSupabaseChapter(novelId: string, chapterNumber: number): Promise<Chapter | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    const { data, error } = await client
+      .from('chapters')
+      .select('*')
+      .eq('novel_id', novelId)
+      .eq('chapter_number', chapterNumber)
+      .maybeSingle();
+
+    if (error || !data) return null;
+    return supabaseRowToChapter(data);
+  } catch {
+    return null;
+  }
 }
 
 export async function saveSupabaseChapters(chapters: Chapter[], novelFallback?: Novel): Promise<boolean> {
@@ -302,8 +435,8 @@ export async function saveSupabaseChapters(chapters: Chapter[], novelFallback?: 
 
   const rows = chapters.map(chapterToSupabaseRow);
   
-  // Upsert in batches of 50 to avoid payload size limits
-  const BATCH_SIZE = 50;
+  // Upsert in batches of 100 for high efficiency with large chapter collections
+  const BATCH_SIZE = 100;
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {
     const chunk = rows.slice(i, i + BATCH_SIZE);
     const { error } = await client
@@ -350,4 +483,162 @@ export async function saveSupabaseChapters(chapters: Chapter[], novelFallback?: 
 export async function saveSupabaseChapter(chapter: Chapter, novelFallback?: Novel): Promise<boolean> {
   return saveSupabaseChapters([chapter], novelFallback);
 }
+
+// -------------------------------------------------------------
+// Gemini API Keys Storage on Supabase
+// -------------------------------------------------------------
+
+/**
+ * Fetch all configured Gemini API keys from Supabase
+ * If gemini_api_keys table has not yet been migrated, falls back to internal system row
+ */
+export async function fetchSupabaseApiKeys(): Promise<GeminiApiKey[]> {
+  const client = getSupabaseClient();
+  if (!client) return [];
+
+  try {
+    const { data, error } = await client
+      .from('gemini_api_keys')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (!error && data) {
+      return data.map(supabaseRowToGeminiKey);
+    }
+
+    // Fallback if table does not exist: retrieve from novels system row
+    if (error && isTableNotFoundError(error)) {
+      const { data: sysRow } = await client
+        .from('novels')
+        .select('cookie_config')
+        .eq('id', '__system_gemini_keys')
+        .maybeSingle();
+
+      if (sysRow?.cookie_config?.keys && Array.isArray(sysRow.cookie_config.keys)) {
+        return sysRow.cookie_config.keys as GeminiApiKey[];
+      }
+    }
+  } catch (err) {
+    console.warn('fetchSupabaseApiKeys notice:', err);
+  }
+
+  return [];
+}
+
+/**
+ * Save / Upsert Gemini API keys to Supabase
+ * Handles both the dedicated gemini_api_keys table and the resilient system backup row
+ */
+export async function saveSupabaseApiKeys(apiKeys: GeminiApiKey[]): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client || apiKeys.length === 0) return false;
+
+  try {
+    const rows = apiKeys.map(geminiKeyToSupabaseRow);
+    const { error } = await client
+      .from('gemini_api_keys')
+      .upsert(rows, { onConflict: 'id' });
+
+    if (!error) {
+      return true;
+    }
+
+    // If dedicated table is missing, store safely in system backup row
+    if (isTableNotFoundError(error)) {
+      const existing = await fetchSupabaseApiKeys();
+      const map = new Map<string, GeminiApiKey>();
+      existing.forEach(k => map.set(k.id, k));
+      apiKeys.forEach(k => map.set(k.id, k));
+      const merged = Array.from(map.values());
+
+      await client.from('novels').upsert({
+        id: '__system_gemini_keys',
+        title: '__system_gemini_keys__',
+        original_title: '',
+        author: 'System',
+        description: 'System-managed Gemini API keys backup row',
+        cover_url: '',
+        source_url: '',
+        source_domain: 'system',
+        original_language: 'zh',
+        target_language: 'vi',
+        status: 'ongoing',
+        chapters_count: 0,
+        translated_chapters_count: 0,
+        last_read_chapter_number: 1,
+        translation_genre: 'general',
+        glossary: {},
+        cookie_config: { keys: merged },
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' });
+
+      return true;
+    }
+
+    console.warn('saveSupabaseApiKeys notice:', error.message);
+  } catch (err) {
+    console.warn('saveSupabaseApiKeys exception:', err);
+  }
+
+  return false;
+}
+
+export async function saveSupabaseApiKey(apiKey: GeminiApiKey): Promise<boolean> {
+  return saveSupabaseApiKeys([apiKey]);
+}
+
+/**
+ * Delete a Gemini API key from Supabase
+ */
+export async function deleteSupabaseApiKey(id: string): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+
+  try {
+    const { error } = await client.from('gemini_api_keys').delete().eq('id', id);
+    if (!error) return true;
+
+    if (isTableNotFoundError(error)) {
+      const existing = await fetchSupabaseApiKeys();
+      const filtered = existing.filter(k => k.id !== id);
+      await client.from('novels').upsert({
+        id: '__system_gemini_keys',
+        title: '__system_gemini_keys__',
+        original_title: '',
+        author: 'System',
+        description: 'System-managed Gemini API keys backup row',
+        cover_url: '',
+        source_url: '',
+        source_domain: 'system',
+        original_language: 'zh',
+        target_language: 'vi',
+        status: 'ongoing',
+        chapters_count: 0,
+        translated_chapters_count: 0,
+        last_read_chapter_number: 1,
+        translation_genre: 'general',
+        glossary: {},
+        cookie_config: { keys: filtered },
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' });
+      return true;
+    }
+  } catch (err) {
+    console.warn('deleteSupabaseApiKey exception:', err);
+  }
+
+  return false;
+}
+
+/**
+ * Retrieve active, valid Gemini API key strings from Supabase for translation requests
+ */
+export async function fetchActiveSupabaseApiKeyStrings(): Promise<string[]> {
+  const keys = await fetchSupabaseApiKeys();
+  return keys
+    .filter(k => k.isActive && k.status !== 'invalid')
+    .map(k => k.key.trim())
+    .filter(Boolean);
+}
+
 

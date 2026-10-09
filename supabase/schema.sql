@@ -102,3 +102,38 @@ END $$;
 -- Thiết lập REPLICA IDENTITY FULL để payload Realtime mang đầy đủ thông tin khi xóa và cập nhật
 ALTER TABLE public.novels REPLICA IDENTITY FULL;
 ALTER TABLE public.chapters REPLICA IDENTITY FULL;
+
+-- 8. Bảng Gemini API Keys (Lưu trữ và xoay vòng nhiều API Key trực tiếp trên Supabase)
+CREATE TABLE IF NOT EXISTS public.gemini_api_keys (
+  id TEXT PRIMARY KEY,
+  key TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL DEFAULT '',
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  status TEXT NOT NULL DEFAULT 'untested',
+  last_tested_at TIMESTAMPTZ,
+  error_message TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+CREATE INDEX IF NOT EXISTS idx_gemini_keys_active ON public.gemini_api_keys (is_active, status);
+
+ALTER TABLE public.gemini_api_keys ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Public select gemini_api_keys" ON public.gemini_api_keys;
+CREATE POLICY "Public select gemini_api_keys" ON public.gemini_api_keys FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Public insert/update/delete gemini_api_keys" ON public.gemini_api_keys;
+CREATE POLICY "Public insert/update/delete gemini_api_keys" ON public.gemini_api_keys FOR ALL USING (true) WITH CHECK (true);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'gemini_api_keys'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.gemini_api_keys;
+  END IF;
+END $$;
+
+ALTER TABLE public.gemini_api_keys REPLICA IDENTITY FULL;

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { translateChapter, translateNovelMetadata } from '@/lib/gemini';
 import { serverStorage } from '@/lib/server-storage';
 import { TranslationGenre } from '@/types/novel';
+import { fetchActiveSupabaseApiKeyStrings, isSupabaseConfigured } from '@/lib/supabase';
 
 export async function POST(req: NextRequest) {
   try {
@@ -44,6 +45,19 @@ export async function POST(req: NextRequest) {
       apiKeys?: string[];
     };
 
+    // If no client API keys provided, retrieve saved active keys from Supabase
+    let effectiveApiKeys: string[] = Array.isArray(apiKeys) && apiKeys.length > 0 ? apiKeys : [];
+    if (effectiveApiKeys.length === 0 && !apiKey && isSupabaseConfigured()) {
+      try {
+        const supabaseKeys = await fetchActiveSupabaseApiKeyStrings();
+        if (supabaseKeys.length > 0) {
+          effectiveApiKeys = supabaseKeys;
+        }
+      } catch {
+        // Continue with env fallback
+      }
+    }
+
     // Mode 1: Translate Novel Title & Metadata
     if (mode === 'novel' || mode === 'metadata' || (!content && title)) {
       if (!title || typeof title !== 'string' || !title.trim()) {
@@ -60,7 +74,7 @@ export async function POST(req: NextRequest) {
         glossary,
         modelName,
         apiKey,
-        apiKeys,
+        apiKeys: effectiveApiKeys,
       });
 
       // If novelId is provided, optionally update existing novel in storage
@@ -100,7 +114,7 @@ export async function POST(req: NextRequest) {
       glossary,
       modelName,
       apiKey,
-      apiKeys,
+      apiKeys: effectiveApiKeys,
     });
 
     // If novelId & chapterNumber supplied, persist to server storage

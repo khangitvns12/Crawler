@@ -151,16 +151,26 @@ export async function executeWithKeyRotation<T>(
       lastError = err instanceof Error ? err : new Error(errorMsg);
 
       const isQuotaLimit = /429|RESOURCE_EXHAUSTED|quota|rate limit|Too Many Requests/i.test(errorMsg);
-      const isInvalidKey = /API_KEY_INVALID|INVALID_ARGUMENT|unauthorized/i.test(errorMsg);
+      const isInvalidKey = /API_KEY_INVALID|INVALID_ARGUMENT|unauthorized|401|UNAUTHENTICATED|invalid authentication|ACCESS_TOKEN_TYPE_UNSUPPORTED/i.test(errorMsg);
       const isUnavailable = /503|UNAVAILABLE|high demand|overloaded/i.test(errorMsg);
 
       if ((isQuotaLimit || isInvalidKey || isUnavailable) && idx < candidateKeys.length - 1) {
         console.warn(
           `[Gemini Rotation] Key ${idx + 1}/${candidateKeys.length} gặp sự cố (${
-            isQuotaLimit ? 'Hết Quota/429' : isUnavailable ? '503 Quá tải' : 'Key Lỗi'
+            isQuotaLimit ? 'Hết Quota/429' : isUnavailable ? '503 Quá tải' : 'Key Lỗi/401'
           }), tự động chuyển sang Key tiếp theo...`
         );
         continue;
+      }
+
+      // If this was the last key and it's an auth or quota error, provide clean guidance
+      if (idx === candidateKeys.length - 1) {
+        if (isInvalidKey) {
+          throw new Error('Gemini API Key không hợp lệ hoặc chưa được cấu hình. Vui lòng nhấn nút "Gemini API Keys" trên thanh công cụ để thêm API Key mới (Key sẽ tự động lưu vào Supabase).');
+        }
+        if (isQuotaLimit) {
+          throw new Error('Các Gemini API Key đều đã đạt giới hạn hạn mức (Quota 429). Bạn có thể thêm thêm key phụ tại nút "Gemini API Keys" để tự động xoay vòng.');
+        }
       }
     }
   }

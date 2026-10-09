@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
+import { saveSupabaseApiKey, isSupabaseConfigured } from '@/lib/supabase';
+import { GeminiApiKey } from '@/types/novel';
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,7 +15,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { apiKey, modelName = 'gemini-3.1-flash-lite' } = body as { apiKey: string; modelName?: string };
+    const {
+      apiKey,
+      keyId,
+      label,
+      saveToSupabase = true,
+      modelName = 'gemini-3.1-flash-lite',
+    } = body as {
+      apiKey: string;
+      keyId?: string;
+      label?: string;
+      saveToSupabase?: boolean;
+      modelName?: string;
+    };
 
     if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 10) {
       return NextResponse.json(
@@ -71,11 +85,28 @@ export async function POST(req: NextRequest) {
       }
 
       if (activeModel) {
+        if (saveToSupabase && isSupabaseConfigured()) {
+          try {
+            const keyRecord: GeminiApiKey = {
+              id: keyId || 'key_' + Math.random().toString(36).substring(2, 11),
+              key: trimmedKey,
+              label: label || 'API Key',
+              isActive: true,
+              status: 'active',
+              lastTestedAt: new Date().toISOString(),
+            };
+            await saveSupabaseApiKey(keyRecord);
+          } catch {
+            // Non-fatal
+          }
+        }
+
         return NextResponse.json({
           success: true,
           valid: true,
           message: `API Key hợp lệ và hoạt động tốt (đã xác thực qua ${activeModel})!`,
           model: activeModel,
+          savedToSupabase: isSupabaseConfigured(),
         });
       }
 
@@ -85,12 +116,31 @@ export async function POST(req: NextRequest) {
 
       const isQuota = /429|RESOURCE_EXHAUSTED|quota|rate limit|Too Many Requests/i.test(errorMsg);
       const isInvalid = /API_KEY_INVALID|INVALID_ARGUMENT|unauthorized|400|403|Forbidden|Bad Request/i.test(errorMsg);
+      const status = isQuota ? 'rate_limited' : isInvalid ? 'invalid' : 'invalid';
+
+      if (saveToSupabase && isSupabaseConfigured()) {
+        try {
+          const keyRecord: GeminiApiKey = {
+            id: keyId || 'key_' + Math.random().toString(36).substring(2, 11),
+            key: trimmedKey,
+            label: label || 'API Key',
+            isActive: !isInvalid,
+            status,
+            lastTestedAt: new Date().toISOString(),
+            errorMessage: errorMsg,
+          };
+          await saveSupabaseApiKey(keyRecord);
+        } catch {
+          // Non-fatal
+        }
+      }
 
       return NextResponse.json({
         success: false,
         valid: false,
         isQuota,
         isInvalid,
+        savedToSupabase: isSupabaseConfigured(),
         error: isQuota
           ? 'API Key đã vượt quá hạn mức miễn phí (Rate Limit / Quota Exceeded 429).'
           : isInvalid

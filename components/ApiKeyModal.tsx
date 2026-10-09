@@ -12,6 +12,10 @@ import {
   updateApiKeyStatus,
   getStoredRotationStrategy,
   saveStoredRotationStrategy,
+  persistApiKeyToSupabase,
+  persistAllApiKeysToSupabase,
+  deleteApiKeyFromSupabase,
+  syncApiKeysFromSupabase,
   GEMINI_KEYS_CHANGED_EVENT,
 } from '@/lib/api-key-storage';
 import { safeFetchJson } from '@/lib/safe-json';
@@ -33,6 +37,7 @@ import {
   Shield,
   X,
   Sparkles,
+  Database,
 } from 'lucide-react';
 
 interface ApiKeyModalProps {
@@ -70,8 +75,21 @@ export default function ApiKeyModal({ onClose }: ApiKeyModalProps) {
   // Status message / toast
   const [feedback, setFeedback] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
-  // Listen to external key changes
+  const [isSyncedWithSupabase, setIsSyncedWithSupabase] = useState(false);
+
+  // Sync with Supabase on mount and listen to key changes
   useEffect(() => {
+    // 1. Initial sync with Supabase
+    syncApiKeysFromSupabase()
+      .then(syncedKeys => {
+        setKeys(syncedKeys);
+        setIsSyncedWithSupabase(true);
+      })
+      .catch(() => {
+        setIsSyncedWithSupabase(false);
+      });
+
+    // 2. Listen to custom event for real-time reactivity
     const handleKeysChange = (e: Event) => {
       const customEvent = e as CustomEvent<GeminiApiKey[]>;
       if (customEvent.detail) {
@@ -94,36 +112,64 @@ export default function ApiKeyModal({ onClose }: ApiKeyModalProps) {
     }, 4000);
   };
 
-  // Test an individual API Key against Google Gemini API
+  // Test an individual API Key against Google Gemini API & save to Supabase
   const handleTestKey = async (targetKey: GeminiApiKey) => {
     setTestingKeyId(targetKey.id);
     try {
       const { ok, data } = await safeFetchJson<any>('/api/keys/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: targetKey.key }),
+        body: JSON.stringify({
+          apiKey: targetKey.key,
+          keyId: targetKey.id,
+          label: targetKey.label,
+          saveToSupabase: true,
+        }),
       });
 
       if (ok && data?.valid) {
         updateApiKeyStatus(targetKey.id, 'active');
-        showFeedback(`✓ Key "${targetKey.label}": Hợp lệ và sẵn sàng sử dụng!`, 'success');
+        await persistApiKeyToSupabase({
+          ...targetKey,
+          status: 'active',
+          lastTestedAt: new Date().toISOString(),
+        });
+        showFeedback(`✓ Key "${targetKey.label}": Hợp lệ và đã lưu vào Supabase!`, 'success');
       } else if (data?.isQuota) {
         updateApiKeyStatus(targetKey.id, 'rate_limited', data?.error);
-        showFeedback(`⚠️ Key "${targetKey.label}": Hết hạn mức tạm thời (429 Rate Limit)`, 'error');
+        await persistApiKeyToSupabase({
+          ...targetKey,
+          status: 'rate_limited',
+          lastTestedAt: new Date().toISOString(),
+          errorMessage: data?.error,
+        });
+        showFeedback(`⚠️ Key "${targetKey.label}": Hết hạn mức tạm thời (429 Rate Limit) - Đã cập nhật vào Supabase`, 'error');
       } else {
         updateApiKeyStatus(targetKey.id, 'invalid', data?.error || 'API Key không hợp lệ');
+        await persistApiKeyToSupabase({
+          ...targetKey,
+          status: 'invalid',
+          lastTestedAt: new Date().toISOString(),
+          errorMessage: data?.error || 'API Key không hợp lệ',
+        });
         showFeedback(`✗ Key "${targetKey.label}": Không hợp lệ hoặc đã bị vô hiệu hóa`, 'error');
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       updateApiKeyStatus(targetKey.id, 'invalid', msg);
+      await persistApiKeyToSupabase({
+        ...targetKey,
+        status: 'invalid',
+        lastTestedAt: new Date().toISOString(),
+        errorMessage: msg,
+      });
       showFeedback(`✗ Lỗi kiểm tra key: ${msg}`, 'error');
     } finally {
       setTestingKeyId(null);
     }
   };
 
-  // Add single key
+  // Add single key & save to Supabase
   const handleAddSingleKey = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputKey.trim()) return;
@@ -139,32 +185,41 @@ export default function ApiKeyModal({ onClose }: ApiKeyModalProps) {
     setInputKey('');
     setInputLabel('');
 
-    showFeedback(`Đã thêm key "${newEntry.label}". Đang kiểm tra kết nối...`, 'info');
+    // Persist to Supabase immediately
+    await persistApiKeyToSupabase(newEntry);
+
+    showFeedback(`Đã thêm key "${newEntry.label}". Đang kiểm tra kết nối & lưu Supabase...`, 'info');
     await handleTestKey(newEntry);
     setIsAdding(false);
   };
 
-  // Add bulk keys
-  const handleAddBulkKeys = () => {
+  // Add bulk keys & save to Supabase
+  const handleAddBulkKeys = async () => {
     if (!bulkText.trim()) return;
     const added = bulkAddApiKeys(bulkText);
     setBulkText('');
     if (added.length === 0) {
       showFeedback('Không tìm thấy API Key Gemini hợp lệ nào (thường bắt đầu bằng "AIza...").', 'error');
     } else {
-      showFeedback(`Đã thêm thành công ${added.length} API Key mới!`, 'success');
+      await persistAllApiKeysToSupabase(added);
+      showFeedback(`Đã thêm và lưu thành công ${added.length} API Key mới vào Supabase!`, 'success');
     }
   };
 
-  // Delete key
-  const handleDeleteKey = (id: string, label: string) => {
+  // Delete key from local and Supabase
+  const handleDeleteKey = async (id: string, label: string) => {
     removeApiKey(id);
-    showFeedback(`Đã xóa key "${label}".`, 'info');
+    await deleteApiKeyFromSupabase(id);
+    showFeedback(`Đã xóa key "${label}" khỏi ứng dụng và Supabase.`, 'info');
   };
 
-  // Toggle active
-  const handleToggleActive = (id: string) => {
+  // Toggle active & update Supabase
+  const handleToggleActive = async (id: string) => {
     toggleApiKeyActive(id);
+    const target = keys.find(k => k.id === id);
+    if (target) {
+      await persistApiKeyToSupabase({ ...target, isActive: !target.isActive });
+    }
   };
 
   // Change strategy
@@ -203,9 +258,13 @@ export default function ApiKeyModal({ onClose }: ApiKeyModalProps) {
                 <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-400 border border-amber-500/20">
                   Custom Keys
                 </span>
+                <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                  <Database className="h-3 w-3" />
+                  {isSyncedWithSupabase ? 'Đã lưu Supabase' : 'Lưu Supabase'}
+                </span>
               </div>
               <p className="text-xs text-slate-400">
-                Thêm nhiều API Key trực tiếp trên Web • Tự động xoay vòng • Vượt giới hạn Quota 15 RPM
+                Thêm nhiều API Key • Tự động xoay vòng • Kiểm tra xong tự động lưu vào Supabase
               </p>
             </div>
           </div>
@@ -566,7 +625,7 @@ export default function ApiKeyModal({ onClose }: ApiKeyModalProps) {
                 Khi bạn thêm <strong>2 đến 5 API Key</strong> (tạo từ các tài khoản Google khác nhau), hệ thống sẽ tự động xoay vòng giúp bạn cào và dịch truyện tốc độ cao liên tục mà không bao giờ bị dừng lại bởi lỗi giới hạn hạn mức (Rate Limit 429).
               </li>
               <li>
-                Các API Key được lưu trực tiếp trong trình duyệt (LocalStorage) của bạn và được bảo mật an toàn, không lưu trữ công khai trên mã nguồn.
+                Sau khi thêm và kiểm tra, các API Key sẽ tự động được <strong>lưu vào cơ sở dữ liệu Supabase</strong> (bảng <code>gemini_api_keys</code>) và đồng bộ với trình duyệt để cả giao diện và máy chủ dịch thuật luôn có sẵn key hoạt động ổn định.
               </li>
             </ul>
           </div>

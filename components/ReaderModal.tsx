@@ -6,7 +6,7 @@ import { cleanChapterTitle, cleanChapterContent, formatChapterDisplayTitle } fro
 import { safeFetchJson } from '@/lib/safe-json';
 import { 
   X, ChevronLeft, ChevronRight, BookOpen, Settings, List, 
-  Sun, Moon, Compass, Sparkles, Sliders
+  Sun, Moon, Compass, Sparkles, Sliders, Search
 } from 'lucide-react';
 
 interface ReaderModalProps {
@@ -38,10 +38,17 @@ export default function ReaderModal({
   const [showSettings, setShowSettings] = useState(false);
   const [showToc, setShowToc] = useState(false);
 
-  // Fetch all chapters
+  // TOC Navigation and on-demand content for up to 10,000 chapters
+  const [tocSearch, setTocSearch] = useState('');
+  const [tocChunkIndex, setTocChunkIndex] = useState(0);
+  const [tocJumpNum, setTocJumpNum] = useState('');
+  const [fullChapterMap, setFullChapterMap] = useState<Record<number, Chapter>>({});
+  const TOC_CHUNK_SIZE = 500;
+
+  // Fetch all chapter headers
   useEffect(() => {
     let active = true;
-    safeFetchJson<any>(`/api/novels/${novel.id}/chapters`)
+    safeFetchJson<any>(`/api/novels/${novel.id}/chapters?headersOnly=true`)
       .then(({ ok, data }) => {
         if (active && ok && data?.success && Array.isArray(data.data)) {
           const sorted = [...data.data].sort((a, b) => a.chapterNumber - b.chapterNumber);
@@ -58,7 +65,27 @@ export default function ReaderModal({
     };
   }, [novel.id]);
 
-  const currentChapter = chapters.find(c => c.chapterNumber === currentChapterNumber) || chapters[0] || null;
+  // On-demand fetch full text content of current chapter if not yet in memory
+  useEffect(() => {
+    const memChapter = fullChapterMap[currentChapterNumber];
+    if (memChapter && (memChapter.rawContent || memChapter.translatedContent)) return;
+
+    const baseChapter = chapters.find(c => c.chapterNumber === currentChapterNumber);
+    if (baseChapter && (baseChapter.rawContent || baseChapter.translatedContent)) return;
+
+    safeFetchJson<any>(`/api/novels/${novel.id}/chapters/${currentChapterNumber}`)
+      .then(({ ok, data }) => {
+        if (ok && data?.data) {
+          setFullChapterMap(prev => ({ ...prev, [currentChapterNumber]: data.data }));
+        }
+      })
+      .catch(() => {});
+  }, [novel.id, currentChapterNumber, chapters, fullChapterMap]);
+
+  const currentChapter = fullChapterMap[currentChapterNumber] ||
+    chapters.find(c => c.chapterNumber === currentChapterNumber) ||
+    chapters[0] ||
+    null;
 
   const changeChapterNumber = React.useCallback((num: number) => {
     setCurrentChapterNumber(num);
@@ -390,23 +417,107 @@ export default function ReaderModal({
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto py-3 space-y-1 pr-1 scrollbar-thin">
-              {chapters.map(ch => (
+            {/* TOC Search & Jump Controls */}
+            <div className="py-2.5 space-y-2 border-b border-black/10 dark:border-white/10">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 opacity-50" />
+                <input
+                  type="text"
+                  placeholder="Tìm số chương hoặc tên..."
+                  value={tocSearch}
+                  onChange={e => setTocSearch(e.target.value)}
+                  className="w-full rounded-lg border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 pl-8 pr-3 py-1.5 text-xs focus:outline-none"
+                />
+              </div>
+
+              {/* Chunk Selector if chapters > 500 */}
+              {chapters.length > TOC_CHUNK_SIZE && !tocSearch.trim() && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="opacity-70 text-[11px]">Khoảng:</span>
+                  <select
+                    value={tocChunkIndex}
+                    onChange={e => setTocChunkIndex(parseInt(e.target.value, 10))}
+                    className="rounded-lg border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 px-2 py-1 text-xs focus:outline-none cursor-pointer"
+                  >
+                    {Array.from({ length: Math.ceil(chapters.length / TOC_CHUNK_SIZE) }).map((_, idx) => {
+                      const start = idx * TOC_CHUNK_SIZE + 1;
+                      const end = Math.min((idx + 1) * TOC_CHUNK_SIZE, chapters.length);
+                      return (
+                        <option key={idx} value={idx} className="bg-slate-900 text-white">
+                          Chương {start} - {end}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              )}
+
+              {/* Jump to Chapter */}
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  placeholder="Số ch..."
+                  value={tocJumpNum}
+                  onChange={e => setTocJumpNum(e.target.value)}
+                  className="w-20 rounded-lg border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 px-2 py-1 text-center text-xs focus:outline-none"
+                />
                 <button
-                  key={ch.id}
+                  type="button"
                   onClick={() => {
-                    changeChapterNumber(ch.chapterNumber);
-                    setShowToc(false);
+                    const num = parseInt(tocJumpNum, 10);
+                    if (!isNaN(num) && num > 0) {
+                      changeChapterNumber(num);
+                      setShowToc(false);
+                    }
                   }}
-                  className={`w-full text-left p-2.5 rounded-lg text-xs truncate transition-all ${
-                    ch.chapterNumber === currentChapterNumber
-                      ? 'bg-amber-500 text-slate-950 font-bold'
-                      : 'hover:bg-black/5 dark:hover:bg-white/5 opacity-80'
-                  }`}
+                  className="rounded-lg bg-amber-500 text-slate-950 px-2.5 py-1 text-xs font-bold hover:bg-amber-400 transition-colors"
                 >
-                  {formatChapterDisplayTitle(ch.chapterNumber, ch.title, ch.translatedTitle)}
+                  Đến chương
                 </button>
-              ))}
+              </div>
+            </div>
+
+            {/* Chapter List */}
+            <div className="flex-1 overflow-y-auto py-3 space-y-1 pr-1 scrollbar-thin">
+              {(() => {
+                let list = chapters;
+                if (tocSearch.trim()) {
+                  const t = tocSearch.trim().toLowerCase();
+                  list = list.filter(c =>
+                    c.chapterNumber.toString().includes(t) ||
+                    c.title.toLowerCase().includes(t) ||
+                    (c.translatedTitle && c.translatedTitle.toLowerCase().includes(t))
+                  );
+                } else if (chapters.length > TOC_CHUNK_SIZE) {
+                  const start = tocChunkIndex * TOC_CHUNK_SIZE;
+                  list = chapters.slice(start, start + TOC_CHUNK_SIZE);
+                }
+
+                if (list.length === 0) {
+                  return (
+                    <div className="text-center py-6 text-xs opacity-50">
+                      Không tìm thấy chương phù hợp
+                    </div>
+                  );
+                }
+
+                return list.map(ch => (
+                  <button
+                    key={ch.id}
+                    onClick={() => {
+                      changeChapterNumber(ch.chapterNumber);
+                      setShowToc(false);
+                    }}
+                    className={`w-full text-left p-2.5 rounded-lg text-xs truncate transition-all ${
+                      ch.chapterNumber === currentChapterNumber
+                        ? 'bg-amber-500 text-slate-950 font-bold'
+                        : 'hover:bg-black/5 dark:hover:bg-white/5 opacity-80'
+                    }`}
+                  >
+                    {formatChapterDisplayTitle(ch.chapterNumber, ch.title, ch.translatedTitle)}
+                  </button>
+                ));
+              })()}
             </div>
           </div>
         </div>

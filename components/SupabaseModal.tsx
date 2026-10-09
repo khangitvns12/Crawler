@@ -159,7 +159,24 @@ ALTER TABLE public.chapters ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Public select novels" ON public.novels FOR SELECT USING (true);
 CREATE POLICY "Public insert/update novels" ON public.novels FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Public select chapters" ON public.chapters FOR SELECT USING (true);
-CREATE POLICY "Public insert/update chapters" ON public.chapters FOR ALL USING (true) WITH CHECK (true);`;
+CREATE POLICY "Public insert/update chapters" ON public.chapters FOR ALL USING (true) WITH CHECK (true);
+
+-- Bảng Gemini API Keys
+CREATE TABLE IF NOT EXISTS public.gemini_api_keys (
+  id TEXT PRIMARY KEY,
+  key TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL DEFAULT '',
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  status TEXT NOT NULL DEFAULT 'untested',
+  last_tested_at TIMESTAMPTZ,
+  error_message TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+ALTER TABLE public.gemini_api_keys ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Public select gemini_api_keys" ON public.gemini_api_keys FOR SELECT USING (true);
+CREATE POLICY "Public insert/update/delete gemini_api_keys" ON public.gemini_api_keys FOR ALL USING (true) WITH CHECK (true);`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm animate-in fade-in">

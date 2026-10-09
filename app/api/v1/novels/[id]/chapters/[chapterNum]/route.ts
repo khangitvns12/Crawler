@@ -20,7 +20,7 @@ export async function GET(
       return NextResponse.json({ status: 'error', message: 'Invalid chapter number' }, { status: 400 });
     }
 
-    const chapter = serverStorage.getChapter(id, num);
+    const chapter = await serverStorage.getChapterAsync(id, num);
     if (!chapter) {
       return NextResponse.json({ status: 'error', message: `Chapter ${num} not found` }, { status: 404 });
     }

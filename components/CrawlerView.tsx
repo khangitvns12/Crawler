@@ -55,7 +55,7 @@ export default function CrawlerView({
 
   // Pagination Configuration
   const [fetchAllPages, setFetchAllPages] = useState(true);
-  const [maxPaginationPages, setMaxPaginationPages] = useState(150);
+  const [maxPaginationPages, setMaxPaginationPages] = useState(500);
 
   // Cookie Test State
   const [isTestingCookie, setIsTestingCookie] = useState(false);
@@ -737,14 +737,16 @@ export default function CrawlerView({
                   <span>Tối đa:</span>
                   <select
                     value={maxPaginationPages}
-                    onChange={e => setMaxPaginationPages(parseInt(e.target.value) || 150)}
+                    onChange={e => setMaxPaginationPages(parseInt(e.target.value) || 500)}
                     className="bg-slate-900 text-white border border-slate-700 rounded px-1.5 py-0.5 text-[11px] focus:outline-none"
                   >
                     <option value={20}>20 trang (~1.000 ch)</option>
                     <option value={50}>50 trang (~2.500 ch)</option>
                     <option value={100}>100 trang (~5.000 ch)</option>
-                    <option value={150}>150 trang (~7.500 ch)</option>
+                    <option value={200}>200 trang (~10.000 ch)</option>
                     <option value={300}>300 trang (~15.000 ch)</option>
+                    <option value={500}>500 trang (~25.000 ch - Khuyên dùng)</option>
+                    <option value={1000}>1.000 trang (~50.000 ch)</option>
                   </select>
                 </div>
               )}
@@ -1107,35 +1109,88 @@ export default function CrawlerView({
             </div>
 
             {/* Crawl Range Settings */}
-            <div className="border-t border-slate-800/80 pt-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="flex flex-wrap items-center gap-3 text-xs">
-                <span className="text-slate-300 font-semibold">Phạm vi cào:</span>
-                <div className="flex items-center gap-1.5">
-                  <label className="text-slate-400">Từ chương:</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={inspectedNovel.chapters.length}
-                    value={fromChapter}
-                    onChange={e => setFromChapter(Math.max(1, parseInt(e.target.value) || 1))}
-                    className="w-16 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-center font-bold text-white"
-                  />
+            <div className="border-t border-slate-800/80 pt-4 flex flex-col gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="text-slate-300 font-semibold">Phạm vi cào:</span>
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-slate-400">Từ:</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={inspectedNovel.chapters.length}
+                      value={fromChapter}
+                      onChange={e => setFromChapter(Math.max(1, parseInt(e.target.value) || 1))}
+                      className="w-20 sm:w-24 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-center font-bold text-white focus:border-amber-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-slate-400">Đến:</label>
+                    <input
+                      type="number"
+                      min={fromChapter}
+                      max={inspectedNovel.chapters.length}
+                      value={toChapter}
+                      onChange={e => setToChapter(Math.min(inspectedNovel.chapters.length, parseInt(e.target.value) || 1))}
+                      className="w-20 sm:w-24 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-center font-bold text-white focus:border-amber-500 focus:outline-none"
+                    />
+                  </div>
+
+                  {/* Quick range selector buttons */}
+                  <div className="flex flex-wrap items-center gap-1 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFromChapter(1);
+                        setToChapter(inspectedNovel.chapters.length);
+                      }}
+                      className="rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white px-2 py-1 transition-colors"
+                      title="Chọn tất cả các chương tìm thấy"
+                    >
+                      Tất cả ({inspectedNovel.chapters.length})
+                    </button>
+                    {inspectedNovel.chapters.length > 50 && (
+                      <button
+                        type="button"
+                        onClick={() => setToChapter(Math.min(inspectedNovel.chapters.length, fromChapter + 49))}
+                        className="rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white px-1.5 py-1 transition-colors"
+                      >
+                        +50
+                      </button>
+                    )}
+                    {inspectedNovel.chapters.length > 100 && (
+                      <button
+                        type="button"
+                        onClick={() => setToChapter(Math.min(inspectedNovel.chapters.length, fromChapter + 99))}
+                        className="rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white px-1.5 py-1 transition-colors"
+                      >
+                        +100
+                      </button>
+                    )}
+                    {inspectedNovel.chapters.length > 500 && (
+                      <button
+                        type="button"
+                        onClick={() => setToChapter(Math.min(inspectedNovel.chapters.length, fromChapter + 499))}
+                        className="rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white px-1.5 py-1 transition-colors"
+                      >
+                        +500
+                      </button>
+                    )}
+                    {inspectedNovel.chapters.length > 1000 && (
+                      <button
+                        type="button"
+                        onClick={() => setToChapter(Math.min(inspectedNovel.chapters.length, fromChapter + 999))}
+                        className="rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white px-1.5 py-1 transition-colors"
+                      >
+                        +1000
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-1.5">
-                  <label className="text-slate-400">Đến chương:</label>
-                  <input
-                    type="number"
-                    min={fromChapter}
-                    max={inspectedNovel.chapters.length}
-                    value={toChapter}
-                    onChange={e => setToChapter(Math.min(inspectedNovel.chapters.length, parseInt(e.target.value) || 1))}
-                    className="w-16 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-center font-bold text-white"
-                  />
-                </div>
-
-                <div className="flex items-center gap-1.5 ml-auto md:ml-4">
-                  <label className="text-slate-400">Giãn cách (ms):</label>
+                  <label className="text-slate-400">Giãn cách:</label>
                   <input
                     type="number"
                     min={0}
@@ -1143,38 +1198,41 @@ export default function CrawlerView({
                     step={200}
                     value={delayMs}
                     onChange={e => setDelayMs(parseInt(e.target.value) || 0)}
-                    className="w-20 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-center text-slate-300"
-                    title="Độ trễ giữa mỗi chương để tránh bị máy chủ website chặn IP"
+                    className="w-16 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-center text-slate-300"
+                    title="Độ trễ (ms) giữa mỗi chương để tránh bị máy chủ website chặn IP"
                   />
+                  <span className="text-slate-500">ms</span>
                 </div>
               </div>
 
               {/* Start Crawl CTA */}
-              <button
-                onClick={handleStartCrawl}
-                disabled={isCrawling}
-                className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 px-5 py-2.5 text-xs font-bold text-slate-950 shadow-lg shadow-emerald-500/20 hover:from-emerald-400 hover:to-teal-500 disabled:opacity-50 transition-all"
-              >
-                {isCrawling ? (
-                  <>
-                    <RefreshCw className="h-4 w-4 animate-spin" />
-                    <span>{autoTranslateOnCrawl ? 'Đang cào & dịch AI...' : 'Đang cào dữ liệu...'}</span>
-                  </>
-                ) : (
-                  <>
-                    {autoTranslateOnCrawl ? (
-                      <Sparkles className="h-4 w-4 fill-current text-slate-950" />
-                    ) : (
-                      <Play className="h-4 w-4 fill-current" />
-                    )}
-                    <span>
-                      {autoTranslateOnCrawl
-                        ? `Cào & Dịch AI ngay (${toChapter - fromChapter + 1} chương)`
-                        : `Bắt đầu cào (${toChapter - fromChapter + 1} chương)`}
-                    </span>
-                  </>
-                )}
-              </button>
+              <div className="flex justify-end pt-1">
+                <button
+                  onClick={handleStartCrawl}
+                  disabled={isCrawling}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 px-6 py-2.5 text-xs font-bold text-slate-950 shadow-lg shadow-emerald-500/20 hover:from-emerald-400 hover:to-teal-500 disabled:opacity-50 transition-all cursor-pointer"
+                >
+                  {isCrawling ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      <span>{autoTranslateOnCrawl ? 'Đang cào & dịch AI...' : 'Đang cào dữ liệu...'}</span>
+                    </>
+                  ) : (
+                    <>
+                      {autoTranslateOnCrawl ? (
+                        <Sparkles className="h-4 w-4 fill-current text-slate-950" />
+                      ) : (
+                        <Play className="h-4 w-4 fill-current" />
+                      )}
+                      <span>
+                        {autoTranslateOnCrawl
+                          ? `Cào & Dịch AI ngay (${toChapter - fromChapter + 1} chương)`
+                          : `Bắt đầu cào (${toChapter - fromChapter + 1} chương)`}
+                      </span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         )}
