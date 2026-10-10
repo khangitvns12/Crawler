@@ -718,6 +718,13 @@ export default function CrawlerView({
               >
                 🇨🇳 69Shuba (Trung Raw)
               </button>
+              <button
+                type="button"
+                onClick={() => handleUrlChange('https://www.xbiquge.info/135/135260/')}
+                className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-300 hover:border-amber-500/50 hover:text-amber-200 transition-colors"
+              >
+                🇨🇳 xBiquge (index_2.html)
+              </button>
             </div>
 
             {/* Pagination Controls */}

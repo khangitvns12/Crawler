@@ -521,6 +521,7 @@ function extractChaptersFromCheerio(
     // Filter out non-chapter links (navigation, author, categories, book detail pages)
     if (cleanUrl.match(/\/(the-loai|tac-gia|danh-sach|page|author|category|tag|modules\/article)\//i)) return;
     if (cleanUrl.match(/\/trang-\d+\/?$/i)) return; // pagination page itself
+    if (cleanUrl.match(/\/index(?:[_-]\d+)?\.html?$/i)) return; // pagination catalog page itself (xbiquge/biquge)
     if (cleanUrl.match(/\/book\/\d+(\.htm|\/)?$/i)) return; // novel index/catalog page itself
     if (/69shuba|69suba|69shu|69xinshu|69yuedu/i.test(cleanUrl) && !cleanUrl.includes('/txt/')) return;
 
@@ -578,25 +579,45 @@ function detectPaginationPages(
     }
   });
 
-  // 2. Check <select> dropdown for chapters/pages
-  $('select.select-chapter option, select[name*="page"] option, select.form-control option').each((_, el) => {
+  // 2. Check <select> dropdown for chapters/pages (common on Chinese & Vietnamese novel sites)
+  $('select.select-chapter option, select[name*="page"] option, select[id*="page"] option, select[name*="index"] option, select[id*="index"] option, select.form-control option, select option').each((_, el) => {
     const optVal = $(el).attr('value') || '';
     const optText = $(el).text() || '';
-    const m = optVal.match(/\/trang-(\d+)/i) || optText.match(/trang\s*(\d+)/i) || optVal.match(/[?&]page=(\d+)/i);
+    const m = optVal.match(/\/trang-(\d+)/i) ||
+              optVal.match(/index[_-](\d+)\.html/i) ||
+              optVal.match(/[?&]page=(\d+)/i) ||
+              optVal.match(/[?&]p=(\d+)/i) ||
+              optText.match(/trang\s*(\d+)/i) ||
+              optText.match(/第\s*(\d+)\s*页/i) ||
+              optText.match(/page\s*(\d+)/i);
     if (m) {
       const num = parseInt(m[1], 10);
-      if (num > detectedTotalPages) detectedTotalPages = num;
+      if (num > detectedTotalPages && num < 25000) detectedTotalPages = num;
     }
   });
 
   // 3. Scan all pagination containers
   const paginationElements = $(
     config.paginationSelector ||
-    '.pagination, ul.pagination, #pagination, div.pagination, .page-nav, ul.page, .pager, div.pages, nav[aria-label*="page"]'
+    '.pagination, ul.pagination, #pagination, div.pagination, .page-nav, #page_nav, .pagelink, #pagelink, .pagelist, #pagelist, .pagebox, #pagebox, .index_page, #index_page, .showpage, ul.page, .pager, div.pages, .page, .pages, .listpage, nav[aria-label*="page"]'
   );
 
+  // 3.1 Check ratio/fractional page text like "1/3", "第1/3页", "Trang 1/5"
+  paginationElements.find('*').each((_, el) => {
+    const t = $(el).text().trim();
+    const m = t.match(/(\d+)\s*\/\s*(\d+)/);
+    if (m) {
+      const total = parseInt(m[2], 10);
+      if (total > detectedTotalPages && total < 25000) {
+        detectedTotalPages = total;
+      }
+    }
+  });
+
   const foundLinks: Array<{ href: string; text: string }> = [];
-  paginationElements.find('a').each((_, el) => {
+  // Scan links inside pagination containers plus any explicit pagination links anywhere on the page (e.g. xbiquge index_2.html)
+  const candidateLinks = paginationElements.find('a').add('a[href*="index_"], a[href*="index-"], a[href*="trang-"], a[href*="page="]');
+  candidateLinks.each((_, el) => {
     const href = $(el).attr('href');
     const text = $(el).text().trim();
     if (!href || href.startsWith('javascript:') || href === '#') return;
@@ -610,11 +631,30 @@ function detectPaginationPages(
     }
   });
 
-  let pagePattern: 'trang-slug' | 'query-page' | 'query-p' | 'page-slug' | 'discrete' = 'discrete';
+  let pagePattern: 'trang-slug' | 'query-page' | 'query-p' | 'page-slug' | 'index-html' | 'underscore-html' | 'discrete' = 'discrete';
   let patternTemplate = '';
 
   for (const { href, text } of foundLinks) {
     const isLastLink = /cuối|last|trang cuối|>>|末页|尾页/i.test(text);
+
+    // xbiquge pattern: /135/135260/index_2.html, index_3.html, etc.
+    const matchIndexHtml = href.match(/(.*\/index[_-]?)(\d+)(\.html?.*)$/i);
+    if (matchIndexHtml) {
+      const num = parseInt(matchIndexHtml[2], 10);
+      if (num > detectedTotalPages) detectedTotalPages = num;
+      pagePattern = 'index-html';
+      patternTemplate = `${matchIndexHtml[1]}{PAGE}${matchIndexHtml[3]}`;
+      continue;
+    }
+
+    const matchUnderscore = href.match(/(.*[_-])(\d+)(\.html?.*)$/i);
+    if (matchUnderscore) {
+      const num = parseInt(matchUnderscore[2], 10);
+      if (num > detectedTotalPages) detectedTotalPages = num;
+      pagePattern = 'underscore-html';
+      patternTemplate = `${matchUnderscore[1]}{PAGE}${matchUnderscore[3]}`;
+      continue;
+    }
 
     const matchTrang = href.match(/(.*\/trang-)(\d+)(\/?.*)$/i);
     if (matchTrang) {
@@ -650,6 +690,12 @@ function detectPaginationPages(
       continue;
     }
 
+    // Direct numeric link text e.g. <a href="...">2</a>, <a href="...">3</a>
+    const pureNum = parseInt(text, 10);
+    if (!isNaN(pureNum) && pureNum > detectedTotalPages && pureNum < 25000) {
+      detectedTotalPages = pureNum;
+    }
+
     if (isLastLink) {
       const numMatch = href.match(/(\d+)/g);
       if (numMatch) {
@@ -669,12 +715,26 @@ function detectPaginationPages(
 
   const cleanBase = initialUrl
     .split('#')[0]
+    .replace(/\/index(?:[_-]\d+)?\.html?$/i, '')
     .replace(/\/trang-\d+\/?$/i, '')
     .replace(/\/page\/\d+\/?$/i, '')
     .replace(/[?&](page|p)=\d+/i, '')
     .replace(/\/+$/, '');
 
-  if (pagePattern === 'trang-slug' && limitPages > 1) {
+  if ((pagePattern === 'index-html' || pagePattern === 'underscore-html') && limitPages > 1) {
+    for (let p = 2; p <= limitPages; p++) {
+      if (patternTemplate && patternTemplate.includes('{PAGE}')) {
+        const targetHref = patternTemplate.replace('{PAGE}', p.toString());
+        try {
+          pageUrls.push(new URL(targetHref, initialUrl).href);
+        } catch {
+          pageUrls.push(`${cleanBase}/index_${p}.html`);
+        }
+      } else {
+        pageUrls.push(`${cleanBase}/index_${p}.html`);
+      }
+    }
+  } else if (pagePattern === 'trang-slug' && limitPages > 1) {
     for (let p = 2; p <= limitPages; p++) {
       if (patternTemplate && patternTemplate.includes('{PAGE}')) {
         pageUrls.push(patternTemplate.replace('{PAGE}', p.toString()));
@@ -747,6 +807,15 @@ export async function inspectNovel(
       }
     } catch {
       // ignore
+    }
+  }
+
+  // xbiquge URL normalization: strip /index_2.html so inspection starts at base catalog page
+  if (/xbiquge|biquge/i.test(normalizedUrl)) {
+    if (/\/index(?:_\d+)?\.html?$/i.test(mainUrl)) {
+      mainUrl = mainUrl.replace(/\/index(?:_\d+)?\.html?$/i, '/');
+      catalogUrl = mainUrl;
+      detailUrl = mainUrl;
     }
   }
 

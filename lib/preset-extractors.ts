@@ -65,6 +65,7 @@ export const SITE_PRESETS: SitePreset[] = [
       chapterLinkSelector: 'a',
       chapterTitleSelector: '.box.single h1, .bookname h1, h1',
       chapterContentSelector: 'article, .box.single article, #content, #chaptercontent, .content',
+      paginationSelector: '.pagination, ul.pagination, #pagination, div.pagination, .page-nav, .page, .pages, .listpage',
       excludeSelectors: [
         'p.readinline', 'script', 'style', '.ad', '.ads', '.row.resetfontsize',
         '.row.nav-bottom', '#outer', '.options', '.icon-list'

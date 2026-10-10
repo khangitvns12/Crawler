@@ -11,7 +11,8 @@ import {
   deleteSupabaseNovel, 
   fetchSupabaseChapters, 
   fetchSupabaseChapter,
-  saveSupabaseChapters 
+  saveSupabaseChapters,
+  deleteSupabaseChapter
 } from './supabase';
 
 // In-memory cache backed by filesystem and Firestore
@@ -805,6 +806,54 @@ class ServerStorage {
     ch.translatedAt = new Date().toISOString();
     this.saveChapter(ch);
     return ch;
+  }
+
+  public deleteChapter(novelId: string, chapterNumber: number): boolean {
+    if (!this.state.chapters[novelId]) return false;
+
+    const initialLen = this.state.chapters[novelId].length;
+    this.state.chapters[novelId] = this.state.chapters[novelId].filter(
+      c => c.chapterNumber !== chapterNumber
+    );
+
+    const deleted = this.state.chapters[novelId].length < initialLen;
+    if (deleted) {
+      const parentNovel = this.state.novels[novelId];
+      if (parentNovel) {
+        parentNovel.chaptersCount = this.state.chapters[novelId].length;
+        parentNovel.translatedChaptersCount = this.state.chapters[novelId].filter(
+          c => c.translationStatus === 'translated'
+        ).length;
+        parentNovel.updatedAt = new Date().toISOString();
+        this.state.novels[novelId] = parentNovel;
+      }
+      this.saveState();
+    }
+    return deleted;
+  }
+
+  public async deleteChapterAsync(novelId: string, chapterNumber: number): Promise<boolean> {
+    this.deleteChapter(novelId, chapterNumber);
+
+    let supabaseDeleted = false;
+    if (isSupabaseConfigured()) {
+      try {
+        supabaseDeleted = await deleteSupabaseChapter(novelId, chapterNumber);
+      } catch (err) {
+        console.warn('Supabase deleteChapterAsync error:', err);
+      }
+    }
+
+    // Also attempt delete from Firestore
+    try {
+      const safeNovelId = sanitizeFirestoreId(novelId);
+      const safeChapId = sanitizeFirestoreId(`chap-${novelId}-${chapterNumber}`);
+      await deleteDoc(doc(db, 'novels', safeNovelId, 'chapters', safeChapId));
+    } catch {
+      // Non-fatal
+    }
+
+    return true;
   }
 }
 

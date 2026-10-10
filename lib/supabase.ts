@@ -484,6 +484,110 @@ export async function saveSupabaseChapter(chapter: Chapter, novelFallback?: Nove
   return saveSupabaseChapters([chapter], novelFallback);
 }
 
+/**
+ * Delete a single chapter from Supabase and update novel chapter counts
+ */
+export async function deleteSupabaseChapter(novelId: string, chapterNumber: number): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+
+  try {
+    const { error } = await client
+      .from('chapters')
+      .delete()
+      .eq('novel_id', novelId)
+      .eq('chapter_number', chapterNumber);
+
+    if (error) {
+      if (isTableNotFoundError(error)) return false;
+      console.warn('Supabase delete chapter note:', error.message);
+      return false;
+    }
+
+    // Refresh novel chapter counts after deletion
+    try {
+      const { count } = await client
+        .from('chapters')
+        .select('*', { count: 'exact', head: true })
+        .eq('novel_id', novelId);
+
+      const { count: transCount } = await client
+        .from('chapters')
+        .select('*', { count: 'exact', head: true })
+        .eq('novel_id', novelId)
+        .eq('translation_status', 'translated');
+
+      await client
+        .from('novels')
+        .update({
+          chapters_count: typeof count === 'number' ? count : 0,
+          translated_chapters_count: typeof transCount === 'number' ? transCount : 0,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', novelId);
+    } catch {
+      // Non-fatal
+    }
+
+    return true;
+  } catch (err) {
+    console.warn('deleteSupabaseChapter exception:', err);
+    return false;
+  }
+}
+
+/**
+ * Delete multiple chapters from Supabase
+ */
+export async function deleteSupabaseChapters(novelId: string, chapterNumbers: number[]): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client || chapterNumbers.length === 0) return false;
+
+  try {
+    const { error } = await client
+      .from('chapters')
+      .delete()
+      .eq('novel_id', novelId)
+      .in('chapter_number', chapterNumbers);
+
+    if (error) {
+      if (isTableNotFoundError(error)) return false;
+      console.warn('Supabase delete chapters note:', error.message);
+      return false;
+    }
+
+    // Refresh novel chapter counts
+    try {
+      const { count } = await client
+        .from('chapters')
+        .select('*', { count: 'exact', head: true })
+        .eq('novel_id', novelId);
+
+      const { count: transCount } = await client
+        .from('chapters')
+        .select('*', { count: 'exact', head: true })
+        .eq('novel_id', novelId)
+        .eq('translation_status', 'translated');
+
+      await client
+        .from('novels')
+        .update({
+          chapters_count: typeof count === 'number' ? count : 0,
+          translated_chapters_count: typeof transCount === 'number' ? transCount : 0,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', novelId);
+    } catch {
+      // Non-fatal
+    }
+
+    return true;
+  } catch (err) {
+    console.warn('deleteSupabaseChapters exception:', err);
+    return false;
+  }
+}
+
 // -------------------------------------------------------------
 // Gemini API Keys Storage on Supabase
 // -------------------------------------------------------------

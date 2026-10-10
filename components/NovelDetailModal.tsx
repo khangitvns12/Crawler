@@ -7,8 +7,10 @@ import { safeFetchJson } from '@/lib/safe-json';
 import { 
   X, BookOpen, Download, Sparkles, Trash2, Edit3, 
   CheckCircle2, Clock, Save, RefreshCw, ExternalLink,
-  Search, Filter
+  Search, Filter, Pencil, Plus, Globe, AlertCircle, Database
 } from 'lucide-react';
+import EditChapterModal from './EditChapterModal';
+import CrawlSingleChapterModal from './CrawlSingleChapterModal';
 
 interface NovelDetailModalProps {
   novel: Novel;
@@ -51,6 +53,59 @@ export default function NovelDetailModal({
   const [statusFilter, setStatusFilter] = useState<'all' | 'translated' | 'pending'>('all');
   const [selectedChunk, setSelectedChunk] = useState<number>(0); // 0 = 1-500, 1 = 501-1000...
   const [jumpChapterNum, setJumpChapterNum] = useState<string>('');
+
+  // Single chapter management (Edit, Delete, Crawl by link)
+  const [editingChapter, setEditingChapter] = useState<Chapter | null>(null);
+  const [showCrawlSingleModal, setShowCrawlSingleModal] = useState(false);
+  const [deletingChapterNum, setDeletingChapterNum] = useState<number | null>(null);
+  const [chapterActionMsg, setChapterActionMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  const showChapterToast = (text: string, type: 'success' | 'error') => {
+    setChapterActionMsg({ text, type });
+    setTimeout(() => setChapterActionMsg(null), 4000);
+  };
+
+  const handleDeleteChapter = async (chapNum: number) => {
+    if (!confirm(`Bạn có chắc chắn muốn xóa Chương ${chapNum} khỏi Supabase và thư viện?`)) return;
+    setDeletingChapterNum(chapNum);
+    try {
+      const { ok, data, error } = await safeFetchJson<any>(`/api/novels/${novel.id}/chapters/${chapNum}`, {
+        method: 'DELETE',
+      });
+      if (!ok) throw new Error(error || data?.error || 'Không thể xóa chương');
+
+      setChapters(prev => prev.filter(c => c.chapterNumber !== chapNum));
+      const updatedCount = Math.max(0, (novel.chaptersCount || chapters.length) - 1);
+      onUpdateNovel({ ...novel, chaptersCount: updatedCount });
+      showChapterToast(`✓ Đã xóa thành công Chương ${chapNum} khỏi Supabase!`, 'success');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showChapterToast(`✗ Lỗi xóa chương: ${msg}`, 'error');
+    } finally {
+      setDeletingChapterNum(null);
+    }
+  };
+
+  const handleChapterSaved = (saved: Chapter) => {
+    setChapters(prev => {
+      const exists = prev.some(c => c.chapterNumber === saved.chapterNumber);
+      if (exists) {
+        return prev.map(c => c.chapterNumber === saved.chapterNumber ? { ...c, ...saved } : c);
+      }
+      return [...prev, saved].sort((a, b) => a.chapterNumber - b.chapterNumber);
+    });
+    showChapterToast(`✓ Đã cập nhật thành công Chương ${saved.chapterNumber} trên Supabase!`, 'success');
+  };
+
+  const handleChapterAdded = (newChapter: Chapter) => {
+    setChapters(prev => {
+      const filtered = prev.filter(c => c.chapterNumber !== newChapter.chapterNumber);
+      return [...filtered, newChapter].sort((a, b) => a.chapterNumber - b.chapterNumber);
+    });
+    const nextCount = Math.max(novel.chaptersCount || 0, chapters.length + 1, newChapter.chapterNumber);
+    onUpdateNovel({ ...novel, chaptersCount: nextCount });
+    showChapterToast(`✓ Đã cào và thêm thành công Chương ${newChapter.chapterNumber} vào Supabase!`, 'success');
+  };
 
   const CHUNK_SIZE = 500;
 
@@ -321,6 +376,23 @@ export default function NovelDetailModal({
 
           {/* Chapters Table */}
           <div className="space-y-3">
+            {chapterActionMsg && (
+              <div
+                className={`rounded-xl px-4 py-2.5 text-xs font-medium border flex items-center gap-2 transition-all ${
+                  chapterActionMsg.type === 'success'
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                    : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                }`}
+              >
+                {chapterActionMsg.type === 'success' ? (
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                ) : (
+                  <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+                )}
+                <span>{chapterActionMsg.text}</span>
+              </div>
+            )}
+
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">
@@ -333,41 +405,54 @@ export default function NovelDetailModal({
                 )}
               </div>
 
-              {/* Status Filter Tabs */}
-              <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px]">
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Button to crawl single chapter by direct URL */}
                 <button
                   type="button"
-                  onClick={() => setStatusFilter('all')}
-                  className={`px-2.5 py-0.5 rounded-lg font-medium transition-colors ${
-                    statusFilter === 'all'
-                      ? 'bg-slate-800 text-white'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
+                  onClick={() => setShowCrawlSingleModal(true)}
+                  className="flex items-center gap-1.5 rounded-xl bg-indigo-600/20 border border-indigo-500/30 px-3 py-1.5 text-xs font-semibold text-indigo-300 hover:bg-indigo-600/30 transition-colors cursor-pointer"
+                  title="Cào từng chương theo liên kết URL trực tiếp và lưu vào Supabase"
                 >
-                  Tất cả ({chapters.length})
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>Cào chương theo link</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setStatusFilter('translated')}
-                  className={`px-2.5 py-0.5 rounded-lg font-medium transition-colors ${
-                    statusFilter === 'translated'
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                      : 'text-slate-400 hover:text-emerald-400'
-                  }`}
-                >
-                  Đã dịch ({chapters.filter(c => c.translationStatus === 'translated').length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStatusFilter('pending')}
-                  className={`px-2.5 py-0.5 rounded-lg font-medium transition-colors ${
-                    statusFilter === 'pending'
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                      : 'text-slate-400 hover:text-amber-400'
-                  }`}
-                >
-                  Chưa dịch ({chapters.filter(c => c.translationStatus !== 'translated').length})
-                </button>
+
+                {/* Status Filter Tabs */}
+                <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter('all')}
+                    className={`px-2.5 py-0.5 rounded-lg font-medium transition-colors ${
+                      statusFilter === 'all'
+                        ? 'bg-slate-800 text-white'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Tất cả ({chapters.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter('translated')}
+                    className={`px-2.5 py-0.5 rounded-lg font-medium transition-colors ${
+                      statusFilter === 'translated'
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : 'text-slate-400 hover:text-emerald-400'
+                    }`}
+                  >
+                    Đã dịch ({chapters.filter(c => c.translationStatus === 'translated').length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter('pending')}
+                    className={`px-2.5 py-0.5 rounded-lg font-medium transition-colors ${
+                      statusFilter === 'pending'
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                        : 'text-slate-400 hover:text-amber-400'
+                    }`}
+                  >
+                    Chưa dịch ({chapters.filter(c => c.translationStatus !== 'translated').length})
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -497,25 +582,53 @@ export default function NovelDetailModal({
                           )}
                         </div>
 
-                        <div className="flex items-center gap-3 shrink-0">
-                          <span className="text-[11px] text-slate-400">
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-[11px] text-slate-400 hidden sm:inline">
                             {ch.wordCount} chữ
                           </span>
                           {ch.translationStatus === 'translated' ? (
                             <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-semibold">
-                              <CheckCircle2 className="h-3.5 w-3.5" /> Đã dịch
+                              <CheckCircle2 className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Đã dịch</span>
                             </span>
                           ) : (
                             <span className="flex items-center gap-1 text-[11px] text-amber-400">
-                              <Clock className="h-3.5 w-3.5" /> Chưa dịch
+                              <Clock className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Chưa dịch</span>
                             </span>
                           )}
 
+                          {/* Read Chapter Button */}
                           <button
+                            type="button"
                             onClick={() => onReadChapter(novel, ch.chapterNumber)}
-                            className="rounded-lg bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700 transition-colors"
+                            className="rounded-lg bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700 transition-colors cursor-pointer"
+                            title="Đọc chương này"
                           >
                             Đọc
+                          </button>
+
+                          {/* Edit Chapter Button */}
+                          <button
+                            type="button"
+                            onClick={() => setEditingChapter(ch)}
+                            className="p-1 rounded-lg text-slate-400 hover:text-amber-300 hover:bg-slate-800 transition-colors cursor-pointer"
+                            title="Chỉnh sửa nội dung & lưu vào Supabase"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+
+                          {/* Delete Chapter Button */}
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteChapter(ch.chapterNumber)}
+                            disabled={deletingChapterNum === ch.chapterNumber}
+                            className="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                            title="Xóa chương này khỏi Supabase"
+                          >
+                            {deletingChapterNum === ch.chapterNumber ? (
+                              <RefreshCw className="h-3.5 w-3.5 animate-spin text-rose-400" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
                           </button>
                         </div>
                       </div>
@@ -536,7 +649,7 @@ export default function NovelDetailModal({
                 onClose();
               }
             }}
-            className="flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 transition-colors"
+            className="flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 transition-colors cursor-pointer"
           >
             <Trash2 className="h-4 w-4" />
             <span>Xóa truyện này</span>
@@ -544,12 +657,39 @@ export default function NovelDetailModal({
 
           <button
             onClick={onClose}
-            className="rounded-xl bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition-colors"
+            className="rounded-xl bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition-colors cursor-pointer"
           >
             Đóng
           </button>
         </div>
       </div>
+
+      {/* Edit Chapter Modal */}
+      {editingChapter && (
+        <EditChapterModal
+          novelId={novel.id}
+          novelTitle={novel.title}
+          chapterNumber={editingChapter.chapterNumber}
+          initialChapter={editingChapter}
+          translationGenre={novel.translationGenre}
+          onClose={() => setEditingChapter(null)}
+          onSaved={handleChapterSaved}
+        />
+      )}
+
+      {/* Crawl Single Chapter by URL Modal */}
+      {showCrawlSingleModal && (
+        <CrawlSingleChapterModal
+          novelId={novel.id}
+          novelTitle={novel.title}
+          defaultChapterNumber={(chapters.length > 0 ? Math.max(...chapters.map(c => c.chapterNumber)) : 0) + 1}
+          cookieConfig={novel.cookieConfig}
+          crawlerConfig={novel.crawlerConfig}
+          translationGenre={novel.translationGenre}
+          onClose={() => setShowCrawlSingleModal(false)}
+          onChapterAdded={handleChapterAdded}
+        />
+      )}
     </div>
   );
 }
