@@ -9,7 +9,7 @@ import { getActiveApiKeyStrings, GEMINI_KEYS_CHANGED_EVENT } from '@/lib/api-key
 import { 
   Compass, ShieldCheck, Key, RefreshCw, AlertCircle, Play, 
   Pause, CheckCircle2, ChevronDown, ChevronUp, Globe, FileText,
-  Sliders, ArrowRight, Sparkles, ExternalLink, Languages, KeyRound
+  Sliders, ArrowRight, Sparkles, ExternalLink, Languages, KeyRound, Server
 } from 'lucide-react';
 
 interface CrawlerViewProps {
@@ -18,6 +18,7 @@ interface CrawlerViewProps {
   resumeNovel?: Novel | null;
   onClearResumeNovel?: () => void;
   onOpenApiKeyModal?: () => void;
+  onSwitchToBackgroundCrawler?: () => void;
 }
 
 export default function CrawlerView({
@@ -26,6 +27,7 @@ export default function CrawlerView({
   resumeNovel,
   onClearResumeNovel,
   onOpenApiKeyModal,
+  onSwitchToBackgroundCrawler,
 }: CrawlerViewProps) {
   const [url, setUrl] = useState(resumeNovel?.sourceUrl || '');
   const [detectedPreset, setDetectedPreset] = useState<string>(() => 
@@ -655,6 +657,36 @@ export default function CrawlerView({
                 Hủy / Cào truyện khác
               </button>
             )}
+          </div>
+        )}
+
+        {/* Background Crawler Quick Switch Banner */}
+        {onSwitchToBackgroundCrawler && (
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-xl border border-indigo-500/30 bg-gradient-to-r from-indigo-950/40 via-slate-900 to-indigo-950/20 p-3.5 shadow-md">
+            <div className="flex items-center gap-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 shrink-0">
+                <Server className="h-4 w-4" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-white flex items-center gap-2">
+                  <span>Cần cào số lượng lớn chương & tắt tab vẫn chạy?</span>
+                  <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-400 border border-emerald-500/20">
+                    Mới
+                  </span>
+                </h4>
+                <p className="text-[11px] text-slate-300">
+                  Dùng chế độ <strong>Cào ngầm máy chủ</strong> — dán link, chọn số chương, đóng tab vẫn tự cào và thêm vào Supabase.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onSwitchToBackgroundCrawler}
+              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-500 transition-colors shadow shrink-0 cursor-pointer"
+            >
+              <span>Mở Cào Ngầm Server</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
           </div>
         )}
 

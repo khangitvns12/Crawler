@@ -7,6 +7,7 @@ import LibraryView from '@/components/LibraryView';
 import CrawlerView from '@/components/CrawlerView';
 import TranslationView from '@/components/TranslationView';
 import ApiDocsView from '@/components/ApiDocsView';
+import BackgroundCrawlerView from '@/components/BackgroundCrawlerView';
 import ReaderModal from '@/components/ReaderModal';
 import EpubExportModal from '@/components/EpubExportModal';
 import NovelDetailModal from '@/components/NovelDetailModal';
@@ -14,7 +15,7 @@ import SupabaseModal from '@/components/SupabaseModal';
 import ApiKeyModal from '@/components/ApiKeyModal';
 import { safeFetchJson } from '@/lib/safe-json';
 import { motion, AnimatePresence } from 'motion/react';
-import { Compass, Sparkles, Download, Terminal, BookOpen, ChevronRight, ShieldCheck, CheckCircle2 } from 'lucide-react';
+import { Compass, Sparkles, Download, Terminal, BookOpen, ChevronRight, ShieldCheck, CheckCircle2, Server } from 'lucide-react';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('library');
@@ -225,11 +226,19 @@ export default function Home() {
 
               <div className="flex flex-wrap items-center gap-3">
                 <button
+                  onClick={() => setActiveTab('bgcrawler')}
+                  className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-amber-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-600/25 hover:from-indigo-500 hover:to-amber-500 active:scale-95 transition-all cursor-pointer"
+                >
+                  <Server className="h-4 w-4" />
+                  <span>Cào ngầm tự động (Đóng tab vẫn cào)</span>
+                </button>
+
+                <button
                   onClick={() => setActiveTab('crawler')}
-                  className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 px-4 py-2.5 text-xs font-bold text-slate-950 shadow-lg shadow-amber-500/20 hover:from-amber-400 hover:to-amber-500 active:scale-95 transition-all"
+                  className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/90 px-4 py-2.5 text-xs font-semibold text-slate-200 hover:bg-slate-800 transition-all cursor-pointer"
                 >
                   <Compass className="h-4 w-4" />
-                  <span>Cào truyện bằng URL</span>
+                  <span>Cào tương tác & Cookie VIP</span>
                 </button>
 
                 <button
@@ -274,6 +283,25 @@ export default function Home() {
             </motion.div>
           )}
 
+          {activeTab === 'bgcrawler' && (
+            <motion.div
+              key="bgcrawler"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2 }}
+            >
+              <BackgroundCrawlerView
+                onOpenNovelDetail={novel => setDetailNovel(novel)}
+                onOpenReader={(novel, chapNum) => handleOpenReader(novel, chapNum)}
+                onNavigateToLibrary={() => {
+                  fetchNovelsList();
+                  setActiveTab('library');
+                }}
+              />
+            </motion.div>
+          )}
+
           {activeTab === 'crawler' && (
             <motion.div
               key="crawler"
@@ -292,6 +320,7 @@ export default function Home() {
                   setActiveTab('translate');
                 }}
                 onOpenApiKeyModal={() => setIsApiKeyModalOpen(true)}
+                onSwitchToBackgroundCrawler={() => setActiveTab('bgcrawler')}
               />
             </motion.div>
           )}

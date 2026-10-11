@@ -1,0 +1,44 @@
+[
+  {
+    "id": "job_1791691004935_il3t7vo",
+    "novelId": "novel_1791691003569_uye2a",
+    "novelTitle": "綜漫：致郁作家，全網跪求別寫了",
+    "novelAuthor": "榆木川",
+    "novelCoverUrl": "https://i2.novel543.com/thumb/120x160/20231119/201140601886.jpg",
+    "sourceUrl": "https://www.novel543.com/0312506018/",
+    "sourceDomain": "www.novel543.com",
+    "startChapterNumber": 1,
+    "endChapterNumber": 2,
+    "totalChaptersToCrawl": 2,
+    "completedChaptersCount": 0,
+    "failedChaptersCount": 0,
+    "currentChapterNumber": 1,
+    "currentChapterTitle": "第1章: 穿越即社死",
+    "status": "running",
+    "autoTranslate": false,
+    "translationGenre": "xianxia",
+    "delayMs": 800,
+    "createdAt": "2026-10-11T03:56:44.935Z",
+    "updatedAt": "2026-10-11T03:56:44.937Z",
+    "logs": [
+      {
+        "id": "log_1791691004937_t1ta1",
+        "timestamp": "2026-10-11T03:56:44.937Z",
+        "text": "⏳ [1/2] Đang cào: Chương 1 - \"第1章: 穿越即社死\"...",
+        "type": "info"
+      },
+      {
+        "id": "log_1791691004937_2bme7",
+        "timestamp": "2026-10-11T03:56:44.937Z",
+        "text": "🔌 Đã kết nối Supabase: Toàn bộ chương sẽ được lưu tức thời vào cơ sở dữ liệu Supabase.",
+        "type": "success"
+      },
+      {
+        "id": "log_1791691004937_gl12x",
+        "timestamp": "2026-10-11T03:56:44.937Z",
+        "text": "🚀 Máy chủ Node.js bắt đầu cào ngầm độc lập cho \"綜漫：致郁作家，全網跪求別寫了\". Tổng cộng: 2 chương (Từ ch. 1 đến ch. 2).",
+        "type": "info"
+      }
+    ]
+  }
+]

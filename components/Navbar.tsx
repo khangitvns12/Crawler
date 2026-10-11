@@ -1,10 +1,10 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { BookOpen, Compass, Sparkles, Terminal, BookMarked, Download, KeyRound } from 'lucide-react';
+import { BookOpen, Compass, Sparkles, Terminal, BookMarked, Download, KeyRound, Server } from 'lucide-react';
 import { getActiveApiKeyStrings, GEMINI_KEYS_CHANGED_EVENT } from '@/lib/api-key-storage';
 
-export type ActiveTab = 'library' | 'crawler' | 'translate' | 'api';
+export type ActiveTab = 'library' | 'crawler' | 'bgcrawler' | 'translate' | 'api';
 
 interface NavbarProps {
   activeTab: ActiveTab;

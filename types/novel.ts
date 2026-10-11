@@ -101,3 +101,58 @@ export interface TranslationJobStatus {
   isRunning: boolean;
   errors: string[];
 }
+
+export type BackgroundJobStatus =
+  | 'idle'
+  | 'running'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface BackgroundJobLog {
+  id: string;
+  timestamp: string;
+  text: string;
+  type: 'info' | 'success' | 'warning' | 'error';
+}
+
+export interface BackgroundCrawlJob {
+  id: string;
+  novelId: string;
+  novelTitle: string;
+  novelOriginalTitle?: string;
+  novelAuthor: string;
+  novelCoverUrl?: string;
+  sourceUrl: string;
+  sourceDomain: string;
+  startChapterNumber: number;
+  endChapterNumber: number;
+  totalChaptersToCrawl: number;
+  completedChaptersCount: number;
+  failedChaptersCount: number;
+  currentChapterNumber?: number;
+  currentChapterTitle?: string;
+  status: BackgroundJobStatus;
+  autoTranslate: boolean;
+  translationGenre?: TranslationGenre;
+  delayMs: number;
+  cookieConfig?: CookieConfig;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  error?: string;
+  logs: BackgroundJobLog[];
+}
+
+export interface CreateBackgroundJobParams {
+  url: string;
+  startChapter?: number;
+  endChapter?: number;
+  maxChapters?: number;
+  autoTranslate?: boolean;
+  translationGenre?: TranslationGenre;
+  delayMs?: number;
+  cookieConfig?: CookieConfig;
+  preferredNovelTitle?: string;
+}
