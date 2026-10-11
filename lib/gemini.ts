@@ -310,6 +310,11 @@ ${content}`;
   });
 }
 
+/**
+ * Alias for translateChapter for background crawler and external callers
+ */
+export const translateNovelContent = translateChapter;
+
 export interface NovelMetadataTranslationOptions {
   title: string;
   description?: string;

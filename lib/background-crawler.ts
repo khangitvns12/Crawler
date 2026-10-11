@@ -20,7 +20,7 @@ import {
   fetchSupabaseApiKeys,
   isSupabaseConfigured,
 } from './supabase';
-import { translateNovelContent, translateNovelMetadata } from './gemini';
+import { translateChapter, translateNovelContent, translateNovelMetadata } from './gemini';
 
 const JOBS_DIR = path.join(process.cwd(), '.data');
 const JOBS_FILE = path.join(JOBS_DIR, 'background-jobs.json');
@@ -276,7 +276,7 @@ async function runBackgroundWorker(
       // 4. Auto-translate with Gemini AI if enabled
       if (job.autoTranslate) {
         try {
-          const transResult = await translateNovelContent({
+          const transResult = await translateChapter({
             title: cleanTitle,
             content: rawContent,
             genre: job.translationGenre || 'xianxia',
