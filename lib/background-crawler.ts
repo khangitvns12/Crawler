@@ -319,7 +319,7 @@ async function runBackgroundWorker(
       }
 
       try {
-        serverStorage.saveChapter(job.novelId, chapterObj);
+        serverStorage.saveChapter(chapterObj, novelMeta);
       } catch (localErr) {
         console.warn('[BackgroundCrawler] local saveChapter error:', localErr);
       }
