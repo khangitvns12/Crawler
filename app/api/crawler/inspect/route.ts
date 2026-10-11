@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json({ success: true, data: metadata });
   } catch (error: unknown) {
+    console.error('[Inspect Route Error]:', error);
     const msg = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: msg }, { status: 500 });
   }

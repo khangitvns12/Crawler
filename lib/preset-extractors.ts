@@ -75,6 +75,28 @@ export const SITE_PRESETS: SitePreset[] = [
     notes: 'Trang truyện raw Bút Thú Các và Tân Bút Thú Các (xbiquge.info, xbiquge.la). Hỗ trợ chuẩn xác UTF-8 và thẻ article.',
   },
   {
+    id: 'novel543',
+    name: 'Novel543 (稷下書院 - Jixia Academy - Trung Raw)',
+    domainPattern: 'novel543',
+    exampleUrl: 'https://www.novel543.com/0312506018/',
+    config: {
+      titleSelector: 'h1, meta[property="og:novel:book_name"], meta[property="og:title"]',
+      authorSelector: '.media-content p:contains("作者") a, span:contains("作者"), .col p:contains("作者"), meta[property="og:novel:author"]',
+      coverSelector: '.media-left img, .book-img img, img.cover, .media img, meta[property="og:image"]',
+      descriptionSelector: '.intro, .description, #intro, .summary, meta[property="og:description"]',
+      chapterListSelector: 'ul.all li a, .all li a, ul.flex.all li a, .chapter-list a, .chaplist a, a[href*=".html"]',
+      chapterLinkSelector: 'a',
+      chapterTitleSelector: 'h1, .content-title, .title',
+      chapterContentSelector: '.content, article, #content',
+      excludeSelectors: [
+        'script', 'style', '.gadBlock', 'ins', '.ad', '.ads', 'a[href*="govip"]',
+        'img[src*="vip.png"]', '.content-nav', '.navbar', '.footer', '.has-text-centered', '#outer'
+      ],
+      delayMs: 1000,
+    },
+    notes: 'Trang tiểu thuyết mạng Trung Quốc (稷下書院 - novel543.com). Hỗ trợ tự động bóc tách danh mục /dir, nội dung .content và tự động ghép các chương bị chia cắt nhiều trang (_1_2.html).',
+  },
+  {
     id: 'truyenfull',
     name: 'TruyenFull (Việt Nam)',
     domainPattern: 'truyenfull',

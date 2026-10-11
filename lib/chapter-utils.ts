@@ -34,6 +34,9 @@ export function cleanChapterTitle(rawTitle?: string | null, fallbackNumber?: num
   // 1c. Remove trailing book titles like "-《婚后生情》" or "_书名"
   title = title.replace(/\s*[-|_|–]\s*《[^》]+》\s*$/g, '').trim();
 
+  // 1d. Remove multi-page chapter indicators like (1/2), (2/2), （1/3）
+  title = title.replace(/\s*[\(（]\s*\d+\s*[\/／]\s*\d+\s*[\)）]/g, '').trim();
+
   // 2. Remove leading decorative noise (bullets, arrows, badges)
   title = title.replace(/^[\s•\-\>✓★☆#|~_]+/g, '').trim();
 

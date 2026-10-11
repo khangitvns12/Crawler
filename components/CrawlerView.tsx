@@ -189,7 +189,7 @@ export default function CrawlerView({
         setTranslationGenre('lightnovel');
       } else if (checkUrl.includes('novelfull') || checkUrl.includes('royalroad')) {
         setTranslationGenre('webnovel');
-      } else if (checkUrl.includes('69shuba') || checkUrl.includes('69shu') || checkUrl.includes('biquge')) {
+      } else if (checkUrl.includes('69shuba') || checkUrl.includes('69shu') || checkUrl.includes('biquge') || checkUrl.includes('novel543')) {
         setTranslationGenre('xianxia');
       }
 
@@ -724,6 +724,13 @@ export default function CrawlerView({
                 className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-300 hover:border-amber-500/50 hover:text-amber-200 transition-colors"
               >
                 🇨🇳 xBiquge (index_2.html)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleUrlChange('https://www.novel543.com/0312506018/')}
+                className="rounded-lg border border-teal-500/30 bg-teal-500/10 px-2.5 py-1 text-[11px] text-teal-300 hover:border-teal-500/50 hover:text-teal-200 transition-colors"
+              >
+                🇹🇼 Novel543 (稷下書院)
               </button>
             </div>
 

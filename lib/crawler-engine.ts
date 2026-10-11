@@ -43,6 +43,12 @@ export function normalizeNovelUrl(rawUrl: string): string {
       parsed.hostname = 'www.xbiquge.info';
       return parsed.href;
     }
+
+    // novel543: ensure novel543.com uses www.novel543.com
+    if (host === 'novel543.com') {
+      parsed.hostname = 'www.novel543.com';
+      return parsed.href;
+    }
   } catch {
     // ignore
   }
@@ -58,6 +64,23 @@ export function getDomainMirrors(rawUrl: string): string[] {
   try {
     const parsed = new URL(normUrl);
     const host = parsed.hostname.toLowerCase();
+
+    // novel543 family
+    if (/novel543/i.test(host)) {
+      const candidates = [
+        'www.novel543.com',
+        'novel543.com',
+      ];
+      for (const m of candidates) {
+        if (!host.includes(m)) {
+          const alt = new URL(normUrl);
+          alt.hostname = m;
+          if (!mirrors.includes(alt.href)) {
+            mirrors.push(alt.href);
+          }
+        }
+      }
+    }
 
     // 69shuba / 69suba family
     if (/69shuba|69suba|69shu|69xinshu|69yuedu/i.test(host)) {
@@ -166,7 +189,6 @@ async function fetchViaFallbackProxies(targetUrl: string, cookieConfig?: CookieC
         'Accept': 'text/html,application/xhtml+xml,text/plain,*/*',
         'X-Return-Format': 'html',
         'X-No-Cache': 'true',
-        'User-Agent': cookieConfig?.userAgent || DEFAULT_USER_AGENT,
       },
       signal: AbortSignal.timeout(18000),
     });
@@ -175,6 +197,8 @@ async function fetchViaFallbackProxies(targetUrl: string, cookieConfig?: CookieC
       if (jinaText && jinaText.length > 250 && !jinaText.includes('Attention Required! | Cloudflare')) {
         return jinaText;
       }
+    } else {
+      console.warn('[Proxy Fallback] Jina status not ok:', jinaRes.status, await jinaRes.text().catch(() => ''));
     }
   } catch (err) {
     console.warn('[Proxy Fallback] Jina Reader fallback note:', err);
@@ -377,6 +401,10 @@ export async function fetchHtmlWithCookies(options: CrawlFetchOptions): Promise<
 
       if (isCloudflareBlocked) {
         encounteredCloudflare = true;
+        // Fast-track fallback proxy for known sites protected by Cloudflare WAF
+        if (/novel543|69shuba|69shu|69suba/i.test(currentUrl)) {
+          break;
+        }
         if (idx < targetUrls.length - 1) {
           lastError = new Error(`Máy chủ ${currentUrl} yêu cầu xác thực Cloudflare (HTTP ${status})`);
           continue;
@@ -441,7 +469,12 @@ function cleanContentHtml(html: string): string {
   text = text
     .replace(/第\s*\(\s*\d+\s*[\/／]\s*\d+\s*\)\s*页/gi, '')
     .replace(/\(\s*第\s*\d+\s*[\/／]\s*\d+\s*页\s*\)/gi, '')
-    .replace(/本章未完，请点击下一页继续阅读/gi, '');
+    .replace(/\(\s*\d+\s*[\/／]\s*\d+\s*\)/gi, '')
+    .replace(/（\s*\d+\s*[\/／]\s*\d+\s*）/gi, '')
+    .replace(/本章未完，请点击下一页继续阅读/gi, '')
+    .replace(/(?:溫馨提示|温馨提示)\s*[：:].*$/gim, '')
+    .replace(/應廣大讀者的要求.*VIP會員免廣告.*$/gim, '')
+    .replace(/點按屏幕中間即可呼喚出菜單.*$/gim, '');
 
   const lines = text
     .split('\n')
@@ -468,6 +501,9 @@ function extractChaptersFromCheerio(
     config.chapterListSelector,
     '#catalog a',
     '.catalog a',
+    'ul.all li a',
+    '.all li a',
+    'ul.flex.all li a',
     '#catalog ul li a',
     '.catalog ul li a',
     'a[href*="/txt/"]',
@@ -475,6 +511,8 @@ function extractChaptersFromCheerio(
     '#list-chapter a',
     '.chapter-list a',
     '#chapter-list a',
+    '.chaplist a',
+    '#chaplist a',
     'ul.list-chapter li a',
     '#list-chapter li a',
     '.list-chapters a',
@@ -522,6 +560,8 @@ function extractChaptersFromCheerio(
     if (cleanUrl.match(/\/(the-loai|tac-gia|danh-sach|page|author|category|tag|modules\/article)\//i)) return;
     if (cleanUrl.match(/\/trang-\d+\/?$/i)) return; // pagination page itself
     if (cleanUrl.match(/\/index(?:[_-]\d+)?\.html?$/i)) return; // pagination catalog page itself (xbiquge/biquge)
+    if (cleanUrl.match(/\/dir\/?$/i)) return; // novel543 directory page itself
+    if (cleanUrl.match(/\/(site|auth|ranking|govip)\/?(?:\.html)?$/i)) return; // novel543 utility pages
     if (cleanUrl.match(/\/book\/\d+(\.htm|\/)?$/i)) return; // novel index/catalog page itself
     if (/69shuba|69suba|69shu|69xinshu|69yuedu/i.test(cleanUrl) && !cleanUrl.includes('/txt/')) return;
 
@@ -533,7 +573,7 @@ function extractChaptersFromCheerio(
     }
 
     // Skip utility buttons like "完整目录", "开始阅读", "书架", etc.
-    if (/^(?:完整目录|开始阅读|我的书架|加入书架|返回书页|章节目录|投票推荐|目录|倒序)$/i.test(chapTitle)) {
+    if (/^(?:完整目录|完整目錄|查看目錄|查看目录|查看完整章節目錄|开始阅读|開始閱讀|我的书架|我的書架|加入书架|加入書架|返回书页|章节目录|章節目錄|投票推荐|目录|目錄|倒序|正序)$/i.test(chapTitle)) {
       return;
     }
 
@@ -819,6 +859,24 @@ export async function inspectNovel(
     }
   }
 
+  // novel543 URL normalization: book page (/{bookId}/) has metadata, directory (/{bookId}/dir) has 100% full chapters
+  const isNovel543 = /novel543/i.test(normalizedUrl);
+  if (isNovel543) {
+    try {
+      const parsedUrl = new URL(normalizedUrl);
+      const hostname = parsedUrl.hostname;
+      const bookIdMatch = normalizedUrl.match(/(?:novel543\.com\/)(\d+)/i);
+      if (bookIdMatch) {
+        const bookId = bookIdMatch[1];
+        detailUrl = `https://${hostname}/${bookId}/`;
+        catalogUrl = `https://${hostname}/${bookId}/dir`;
+        mainUrl = detailUrl;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   const { html, usedUrl } = await fetchHtmlWithCookies({ url: mainUrl, cookieConfig });
   const activeBaseUrl = usedUrl || mainUrl;
   const $ = cheerio.load(html);
@@ -836,7 +894,8 @@ export async function inspectNovel(
   }
   if (title) {
     title = title
-      .replace(/\s*[-|_|–]\s*(TruyenFull|Metruyenchu|Tangthuvien|NovelFull|Syosetu|Biquge|69shuba|69shu|新笔趣阁.*|Đọc truyện).*$/i, '')
+      .replace(/\s*[-|_|–]\s*(TruyenFull|Metruyenchu|Tangthuvien|NovelFull|Syosetu|Biquge|69shuba|69shu|novel543|稷下書院|新笔趣阁.*|Đọc truyện).*$/i, '')
+      .replace(/\s*章[節节]列表.*$/i, '')
       .replace(/目录最新章节.*$/i, '')
       .replace(/最新章节.*$/i, '')
       .replace(/全文免费阅读.*$/i, '')
@@ -859,6 +918,13 @@ export async function inspectNovel(
                        $('meta[property="novel:author"]').attr('content');
     if (metaAuthor) author = metaAuthor.trim();
   }
+  if (isNovel543) {
+    const authorMatch = $.text().match(/作者[：:]\s*([^\s<分类更新主角\r\n]+)/);
+    if (authorMatch) author = authorMatch[1].trim();
+  }
+  if (author) {
+    author = author.replace(/\s*(?:分類|分类|更新|主角).*$/i, '').trim();
+  }
 
   // 3. Extract Description
   let description = '';
@@ -877,6 +943,9 @@ export async function inspectNovel(
   }
   if (!coverUrl) {
     coverUrl = $('meta[property="og:image"]').attr('content') || '';
+  }
+  if (isNovel543 && !coverUrl) {
+    coverUrl = $('img[src*="thumb"], .media-left img, .book-img img, .cover img, .media img').first().attr('src') || '';
   }
   if (coverUrl.startsWith('//')) {
     coverUrl = 'https:' + coverUrl;
@@ -901,6 +970,45 @@ export async function inspectNovel(
       // Fallback to main page if catalog page fails
       extractChaptersFromCheerio($, config, activeBaseUrl, chapters);
     }
+  } else if (isNovel543) {
+    // For novel543: Fetch dedicated directory page (/dir) which contains all 100% chapters in ul.all
+    try {
+      const targetDirUrl = catalogUrl || (mainUrl.replace(/\/+$/, '') + '/dir');
+      const { html: catHtml, usedUrl: catUsedUrl } = await fetchHtmlWithCookies({ url: targetDirUrl, cookieConfig });
+      const $cat = cheerio.load(catHtml);
+      const dirBase = catUsedUrl || targetDirUrl;
+
+      // Extract from chronological full list (ul.all a)
+      const allElements = $cat('ul.all a, .all a, ul[class*="all"] a');
+      if (allElements.length > 0) {
+        allElements.each((_, el) => {
+          const href = $cat(el).attr('href');
+          const t = $cat(el).text().trim();
+          if (!href || href.startsWith('javascript:') || href === '#') return;
+          try {
+            const full = new URL(href, dirBase).href;
+            if (/\d+_\d+\.html/.test(full) && !chapters.some(c => c.url === full)) {
+              const assignedNum = chapters.length + 1;
+              const cleanTitle = cleanChapterTitle(t, assignedNum);
+              chapters.push({
+                number: assignedNum,
+                title: cleanTitle || `Chương ${assignedNum}`,
+                url: full,
+              });
+            }
+          } catch {
+            // ignore
+          }
+        });
+      }
+
+      // If ul.all didn't yield chapters, fallback to extractChaptersFromCheerio
+      if (chapters.length === 0) {
+        extractChaptersFromCheerio($cat, config, dirBase, chapters);
+      }
+    } catch {
+      extractChaptersFromCheerio($, config, activeBaseUrl, chapters);
+    }
   } else {
     // Normal extraction on current page
     extractChaptersFromCheerio($, config, activeBaseUrl, chapters);
@@ -909,7 +1017,7 @@ export async function inspectNovel(
   // Automatic catalog page detection for other sites if initial page has few chapters (e.g. only latest 5-10 chapters)
   if (chapters.length <= 10) {
     const catalogLinkTag = $(
-      'a:contains("完整目录"), a:contains("全部章节"), a:contains("所有章节"), a:contains("查看目录"), a:contains("章节目录"), a:contains("Mục lục đầy đủ"), a:contains("Xem tất cả"), a[href*="/catalog/"], a[href*="/mulu/"], a[href*="/all/"]'
+      'a:contains("完整目录"), a:contains("完整目錄"), a:contains("全部章节"), a:contains("全部章節"), a:contains("所有章节"), a:contains("查看目录"), a:contains("查看目錄"), a:contains("查看完整章節目錄"), a:contains("章节目录"), a:contains("章節目錄"), a:contains("Mục lục đầy đủ"), a:contains("Xem tất cả"), a[href*="/catalog/"], a[href*="/mulu/"], a[href*="/all/"], a[href*="/dir"]'
     ).first();
     const catHref = catalogLinkTag.attr('href');
     if (catHref && !catHref.startsWith('javascript:') && catHref !== '#') {
@@ -1025,7 +1133,8 @@ export async function scrapeChapterContent(
     'button', '.btn', '.navigation', '.prev-next', '#comment', '.comment-section',
     '.watermark', '.source-note', '.chapter-source', '.signature', '.post-tail',
     '.source', '.copyright', '.tail-info', '.ad-box', '.ad-container', '.reading-footer',
-    '.txtinfo', '#txtright', '.row.resetfontsize', '.row.nav-bottom', '#outer'
+    '.txtinfo', '#txtright', '.row.resetfontsize', '.row.nav-bottom', '#outer',
+    '.gadBlock', 'ins', 'a[href*="govip"]', 'img[src*="vip.png"]', 'button.is-primary'
   ];
   $(excludes.join(', ')).remove();
 
@@ -1065,17 +1174,24 @@ export async function scrapeChapterContent(
     });
   }
 
-  // 4. Check for multi-page chapter continuation (xbiquge/biquge style: e.g. 26427_2.html, 26427_3.html)
-  const isBiqugeFamily = /xbiquge|biquge|biqubao/i.test(activeChapterUrl);
-  if (isBiqugeFamily) {
+  // 4. Check for multi-page chapter continuation (xbiquge/biquge/novel543 style: e.g. 26427_2.html or 8096_1_2.html)
+  const isMultiPartSite = /xbiquge|biquge|biqubao|novel543/i.test(activeChapterUrl);
+  if (isMultiPartSite) {
     let currentPartUrl = activeChapterUrl;
     let current$ = $;
     let partNum = 2;
-    const maxParts = 10;
+    const maxParts = 12;
 
-    // Extract base slug of current chapter, e.g. "26427" from "/116/116322/26427.html" or "26427_2.html"
-    const chapterSlugMatch = activeChapterUrl.match(/\/(\d+)(?:_\d+)?\.html/i);
-    const chapterSlug = chapterSlugMatch ? chapterSlugMatch[1] : '';
+    const isNovel543Site = /novel543/i.test(activeChapterUrl);
+    let chapterSlug = '';
+    if (isNovel543Site) {
+      const slugMatch = activeChapterUrl.match(/\/(\d+_\d+)(?:_\d+)?\.html/i);
+      chapterSlug = slugMatch ? slugMatch[1] : '';
+    }
+    if (!chapterSlug) {
+      const chapterSlugMatch = activeChapterUrl.match(/\/(\d+)(?:_\d+)?\.html/i);
+      chapterSlug = chapterSlugMatch ? chapterSlugMatch[1] : '';
+    }
 
     while (partNum <= maxParts) {
       // Find the next subpage continuation link
@@ -1108,8 +1224,8 @@ export async function scrapeChapterContent(
           skipMirrors: true,
         });
         const next$ = cheerio.load(nextHtml);
-        next$('script, style, .row.nav-bottom, .row.resetfontsize, #outer, .ad, .ads, h1, h2').remove();
-        const partContent = next$(config.chapterContentSelector || 'article, #content').first().html() || '';
+        next$('script, style, .row.nav-bottom, .row.resetfontsize, #outer, .ad, .ads, .gadBlock, ins, a[href*="govip"], img[src*="vip.png"], button.is-primary, h1, h2').remove();
+        const partContent = next$(config.chapterContentSelector || '.content, article, #content').first().html() || '';
         if (partContent) {
           contentHtml += '\n\n' + partContent;
         }
