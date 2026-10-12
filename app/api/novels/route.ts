@@ -4,7 +4,7 @@ import { Novel } from '@/types/novel';
 
 export async function GET() {
   try {
-    const novels = serverStorage.getAllNovels();
+    const novels = await serverStorage.getAllNovelsAsync();
     return NextResponse.json({ success: true, data: novels });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -20,8 +20,8 @@ export async function POST(req: NextRequest) {
     } catch {
       return NextResponse.json({ error: 'Dữ liệu yêu cầu không phải định dạng JSON hợp lệ' }, { status: 400 });
     }
-    const novelData = body as Partial<Novel>;
 
+    const novelData = body as Partial<Novel>;
     if (!novelData.title || typeof novelData.title !== 'string') {
       return NextResponse.json({ error: 'Tên truyện không được để trống' }, { status: 400 });
     }

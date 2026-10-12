@@ -1,21 +1,18 @@
 import fs from 'fs';
 import path from 'path';
 import { Novel, Chapter } from '@/types/novel';
-import { db } from './firebase';
-import { collection, doc, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
 import { cleanChapterTitle, sanitizeChapter, sanitizeChapters } from './chapter-utils';
-import { 
-  isSupabaseConfigured, 
-  fetchSupabaseNovels, 
-  saveSupabaseNovel, 
-  deleteSupabaseNovel, 
-  fetchSupabaseChapters, 
+import {
+  isSupabaseConfigured,
+  fetchSupabaseNovels,
+  saveSupabaseNovel,
+  deleteSupabaseNovel,
+  fetchSupabaseChapters,
   fetchSupabaseChapter,
   saveSupabaseChapters,
-  deleteSupabaseChapter
+  deleteSupabaseChapter,
 } from './supabase';
 
-// In-memory cache backed by filesystem and Firestore
 interface StorageState {
   novels: Record<string, Novel>;
   chapters: Record<string, Chapter[]>; // novelId -> chapters
@@ -24,249 +21,11 @@ interface StorageState {
 const DB_DIR = path.join(process.cwd(), '.data');
 const DB_FILE = path.join(DB_DIR, 'novels-db.json');
 
-const INITIAL_SEED_NOVELS: Novel[] = [
-  {
-    id: 'seed-kiem-ton-1',
-    title: 'Vạn Giới Kiếm Tôn',
-    originalTitle: '万界剑尊 (Wan Jie Jian Zun)',
-    author: 'Thanh Phong Tiếu',
-    description: 'Thiếu niên Dương Diệp gặp biến cố gia tộc, linh căn bị phế, bị tông môn ruồng bỏ. Nhưng trong nghịch cảnh lại vô tình mở ra Thần Bí Kiếm Lô, tu luyện Vô Thượng Kiếm Đạo, một kiếm trảm phá hư không, độc bá chư thiên vạn giới!',
-    coverUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=600&auto=format&fit=crop&q=80',
-    sourceUrl: 'https://www.69shuba.cx/book/sample-kiem-ton.htm',
-    sourceDomain: '69shuba.cx',
-    originalLanguage: 'zh',
-    targetLanguage: 'vi',
-    status: 'completed',
-    chaptersCount: 3,
-    translatedChaptersCount: 3,
-    lastReadChapterNumber: 1,
-    translationGenre: 'xianxia',
-    glossary: {
-      '杨叶': 'Dương Diệp',
-      '剑炉': 'Kiếm Lô',
-      '玄剑宗': 'Huyền Kiếm Tông',
-      '先天境': 'Tiên Thiên cảnh',
-      '玄气': 'Huyền khí',
-    },
-    cookieConfig: {
-      cookieString: 'cf_clearance=demo_token_xyz; session_id=vip_user_999;',
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
-    },
-    createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'seed-tai-sinh-kiem-2',
-    title: 'Chuyển Sinh Thành Kiếm',
-    originalTitle: '転生したら剣でした (Tensei Shitara Ken Deshita)',
-    author: 'Yuu Tanaka',
-    description: 'Tỉnh dậy ở một thế giới xa lạ, nhân vật chính phát hiện mình đã biến thành một thanh ma kiếm cắm trên bãi cỏ. Sau đó gặp gỡ Fran - cô bé miêu nhân tộc nô lệ, cả hai cùng lập khế ước bước vào cuộc phiêu lưu diệt ma thú!',
-    coverUrl: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=600&auto=format&fit=crop&q=80',
-    sourceUrl: 'https://ncode.syosetu.com/n6006cw/',
-    sourceDomain: 'syosetu.com',
-    originalLanguage: 'ja',
-    targetLanguage: 'vi',
-    status: 'ongoing',
-    chaptersCount: 2,
-    translatedChaptersCount: 2,
-    lastReadChapterNumber: 1,
-    translationGenre: 'lightnovel',
-    glossary: {
-      'フラン': 'Fran',
-      '師匠': 'Sư phụ',
-      '黒猫族': 'Hắc Miêu tộc',
-      '魔石': 'Ma thạch',
-    },
-    cookieConfig: {
-      cookieString: '',
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
-    },
-    createdAt: new Date(Date.now() - 86400000).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-];
-
-const INITIAL_SEED_CHAPTERS: Record<string, Chapter[]> = {
-  'seed-kiem-ton-1': [
-    {
-      id: 'chap-kt-1',
-      novelId: 'seed-kiem-ton-1',
-      chapterNumber: 1,
-      title: '第1章 绝境逢生，神秘剑炉！',
-      translatedTitle: 'Chương 1: Tuyệt Cảnh Trùng Sinh, Thần Bí Kiếm Lô!',
-      sourceUrl: 'https://www.69shuba.cx/txt/sample/1.htm',
-      rawContent: `寒风如刀，大雪纷飞。
-玄剑宗外门杂役峰上，杨叶浑身是血地倒在冰冷的积雪中。
-他的胸口凹陷，体内经脉寸断，丹田之中的玄气种子已然彻底碎裂。
-“杨叶，休怪本师兄心狠手辣，要怪只怪你不识好歹，竟敢拒绝将那枚极品聚气丹交出来！”
-外门执事弟子赵狂冷冷地看了一眼躺在雪地里的少年，擦了擦拳头上的血迹，转身扬长而去。
-刺骨的寒意侵蚀着意识，杨叶艰难地睁开双眼，指甲深深抠进冻硬的泥土中。
-“我不甘心……妹妹的寒毒还在发作，我若是死了，谁来救她？！”
-强烈的求生执念引发了他胸前佩戴的一枚古朴吊坠的异动。
-嗡！
-一声清越嘹亮的剑鸣骤然自虚空震响！
-吊坠化作一道金色流光，直接钻入杨叶的意识海中，化作一座遮天蔽日的九层神秘古老剑炉！
-剑炉旋转，无数古朴玄奥的金色铭文倾泻而下，瞬间包裹住他濒临破碎的残躯。
-破碎的丹田被无尽剑光重塑，枯竭的经脉内，一股凌厉霸道至极的无上剑气疯狂滋生！`,
-      translatedContent: `Gió lạnh như đao cạo, tuyết lớn tung bay rợp trời.
-Trên đỉnh Tạp Dịch phong thuộc ngoại môn Huyền Kiếm Tông, Dương Diệp toàn thân đẫm máu gục ngã giữa lớp tuyết lạnh thấu xương.
-Lồng ngực hắn lõm sâu, kinh mạch trong cơ thể đứt đoạn từng tấc, hạt giống huyền khí tích tụ bấy lâu nơi đan điền đã hoàn toàn vỡ vụn.
-"Dương Diệp, chớ trách bản sư huynh lòng lang dạ thú, có trách thì trách ngươi có mắt không tròng, dám cự tuyệt giao nộp viên Cực Phẩm Tụ Khí Đan kia ra!"
-Triệu Cuồng - chấp sự đệ tử ngoại môn - lạnh lùng liếc nhìn thiếu niên nằm thoi thóp trên tuyết trắng, khinh khỉnh lau vết máu trên nắm đấm, rồi nghênh ngang phất áo rời đi.
-Cái lạnh buốt giá xâm thực từng tấc ý thức, Dương Diệp gắng gượng mở to đôi mắt vằn vện tơ máu, mười đầu ngón tay cắm sâu vào lớp bùn đất đóng băng.
-"Ta không cam tâm... Hàn độc của muội muội vẫn đang tái phát, nếu ta chết đi, ai sẽ cứu muội ấy?!"
-Chấp niệm sinh tồn mãnh liệt tới cùng cực đã vô tình kích hoạt dị động từ một mảnh ngọc trụy cổ phác đeo trước ngực hắn.
-Ong!
-Một tiếng kiếm minh trong trẻo vang dội bỗng nhiên rúng động từ sâu trong hư không!
-Mảnh ngọc trụy hóa thành một đạo kim quang chói lọi, bắn thẳng vào biển ý thức của Dương Diệp, rồi biến ảo thành một tòa Thần Bí Kiếm Lô chín tầng nguy nga che ngợp cả bầu trời!
-Kiếm Lô xoay tròn, vô số kim sắc phù văn cổ xưa huyền ảo trút xuống như thác lũ, ngay tức khắc bao bọc lấy thể xác tàn tạ kề cận cái chết của hắn.
-Đan điền vỡ nát được vô tận kiếm quang tái tạo, kinh mạch khô cạn nay trào dâng một luồng vô thượng kiếm khí bá đạo lăng lệ tuyệt luân!`,
-      translationStatus: 'translated',
-      wordCount: 380,
-      createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-      translatedAt: new Date(Date.now() - 86400000 * 2.8).toISOString(),
-    },
-    {
-      id: 'chap-kt-2',
-      novelId: 'seed-kiem-ton-1',
-      chapterNumber: 2,
-      title: '第2章 剑意初成，逆斩强敌！',
-      translatedTitle: 'Chương 2: Kiếm Ý Sơ Thành, Nghịch Trảm Cường Địch!',
-      sourceUrl: 'https://www.69shuba.cx/txt/sample/2.htm',
-      rawContent: `轰！
-剑炉震荡，磅礴的金色能量洗筋伐髓，杨叶整个人宛如脱胎换骨。
-原本苍白的皮肤泛起淡淡的古铜光泽，体内奔腾的不再是寻常玄气，而是纯粹霸道至极的破天剑气！
-“这是……太古葬剑诀？”
-庞大的信息流涌入脑海，杨叶深吸一口冷气，眼中迸发出难以置信的炽烈狂喜。
-就在此时，杂役院外突然传来了脚步声。
-“赵师兄，杨叶那杂种真的死了吗？他妹妹杨茹长得那般水灵，要是没了哥哥撑腰，嘿嘿……”
-两名外门恶仆推开破烂的院门，狞笑走了进来。
-然而下一瞬，一道冰冷刺骨的目光直射他们心魄。
-原本早该气绝身亡的杨叶，此刻竟然静静地负手立于门檐下！
-“你……你竟然没死？！”
-“死人不需要知道这么多。”
-杨叶右手并指如剑，凌空一划！
-嗤啦！
-一道肉眼难辨的森白剑气掠过虚空，两颗头颅冲天而起，血染长空！`,
-      translatedContent: `Oanh!
-Kiếm Lô chấn động dữ dội, nguồn năng lượng màu vàng bàng bạc lập tức tẩy kinh phạt tủy, khiến toàn thân Dương Diệp như được thoát thai hoán cốt.
-Làn da tái nhợt vốn có chợt ánh lên sắc đồng cổ nhẹ nhàng, luân chuyển trong cơ thể hắn giờ đây không còn là huyền khí tầm thường nữa, mà là Phá Thiên Kiếm Khí thuần túy bá đạo đến đỉnh điểm!
-"Đây là... Thái Cổ Táng Kiếm Quyết?"
-Một dòng thông tin khổng lồ ùa vào biển thức, Dương Diệp hít sâu một hơi khí lạnh, trong đáy mắt bùng lên ngọn lửa mừng rỡ cuồng nhiệt khó mà tin nổi.
-Đúng vào lúc này, ngoài tiểu viện tạp dịch bỗng vang lên tiếng bước chân lẹp xẹp.
-"Triệu sư huynh, tiểu tử Dương Diệp kia thật sự đã chết rồi sao? Muội muội Dương Như của hắn dung mạo thanh tú như nước, nếu mất đi chỗ dựa là hắn, hắc hắc..."
-Hai tên ác bộc ngoại môn đẩy cánh cửa viện rách nát, nở nụ cười dâm tà bước vào.
-Thế nhưng ngay khoảnh khắc tiếp theo, một ánh mắt lạnh thấu tâm can bắn thẳng vào thần hồn bọn chúng.
-Dương Diệp – kẻ đáng lẽ đã tắt thở từ lâu – lúc này lại đang chắp tay sau lưng, bình thản đứng sừng sững dưới mái hiên!
-"Ngươi... Ngươi thế mà còn chưa chết?!"
-"Kẻ chết không cần biết quá nhiều."
-Tay phải Dương Diệp khép ngón như kiếm, lăng không vung lên một đường dứt khoát!
-Xoẹt!
-Một đạo kiếm khí màu trắng bạc sắc bén xé toạc hư không, hai chiếc đầu lâu bay vút lên trời, máu nhuộm đỏ cả một vùng tuyết trắng!`,
-      translationStatus: 'translated',
-      wordCount: 395,
-      createdAt: new Date(Date.now() - 86400000 * 2.5).toISOString(),
-      translatedAt: new Date(Date.now() - 86400000 * 2.3).toISOString(),
-    },
-    {
-      id: 'chap-kt-3',
-      novelId: 'seed-kiem-ton-1',
-      chapterNumber: 3,
-      title: '第3章 宗门大比的前夕',
-      translatedTitle: 'Chương 3: Tiền Đêm Đại Hội Tông Môn',
-      sourceUrl: 'https://www.69shuba.cx/txt/sample/3.htm',
-      rawContent: `斩杀恶仆之后，杨叶神色平静地收手。
-他从怀中取出仅存的三株凝血草，研碎喂给躺在草席上的病弱少女。
-“哥哥，我冷……”少女杨茹睫毛轻颤，脸色苍白得近乎透明。
-杨叶握住妹妹冰凉的小手，运转体内的温和剑气，替她驱散体内顽固的九幽寒毒。
-“茹儿别怕，有哥哥在，三日后的宗门大比，我定会拿下第一，替你求取万年火灵芝！”
-杨叶眼中闪过一抹决然。
-在这强者为尊的世界，唯有手中的三尺青锋，才能守护至亲！`,
-      translatedContent: `Sau khi trảm sát hai tên ác bộc, Dương Diệp thần sắc bình thản thu tay về.
-Hắn từ trong ngực lấy ra ba cọng Ngưng Huyết Thảo cuối cùng, nghiền nát rồi cẩn thận đút cho thiếu nữ ốm yếu đang nằm trên chiếc chiếu cói.
-"Ca ca, muội lạnh quá..." Thiếu nữ Dương Như khẽ run rẩy hàng mi, gương mặt tái nhợt gần như trong suốt.
-Dương Diệp nắm chặt bàn tay nhỏ nhắn lạnh ngắt của muội muội, vận chuyển một tia kiếm khí ấm áp ôn hòa trong cơ thể, thay nàng xua đi luồng Cửu U Hàn Độc ngoan cố.
-"Như nhi đừng sợ, có ca ca ở đây rồi. Đại hội tông môn ba ngày tới, ta nhất định sẽ đoạt lấy ngôi vị đệ nhất, mang về Vạn Niên Hỏa Linh Chi chữa khỏi bệnh cho muội!"
-Trong mắt Dương Diệp lóe lên một tia quyết tuyệt kiên định.
-Tại thế giới cường giả vi tôn này, duy chỉ có thanh kiếm ba thước trong tay mới có thể che chở cho người thân yêu nhất!`,
-      translationStatus: 'translated',
-      wordCount: 290,
-      createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-      translatedAt: new Date(Date.now() - 86400000 * 1.8).toISOString(),
-    },
-  ],
-  'seed-tai-sinh-kiem-2': [
-    {
-      id: 'chap-tk-1',
-      novelId: 'seed-tai-sinh-kiem-2',
-      chapterNumber: 1,
-      title: '第1話 気がついたら剣でした',
-      translatedTitle: 'Chương 1: Khi Tỉnh Dậy Đã Biến Thành Kiếm Rồi',
-      sourceUrl: 'https://ncode.syosetu.com/n6006cw/1/',
-      rawContent: `気づいた時には、俺は見知らぬ草原のど真ん中に突き刺さっていた。
-周囲には誰もいない。風がそよそよと吹き抜けるだけだ。
-手足を動かそうとしても、感覚がない。
-なぜなら、俺の体は鋼鉄の刃と柄でできていたからだ。
-『鑑定スキル発動――名称：知性を持つ魔剣（インテリジェンス・ウェポン）』
-頭の中に突如響いた無機質なアナウンスに、俺は愕然とした。
-どうやら俺は車に轢かれて死んだ後、ファンタジー世界で剣として転生してしまったらしい。
-だが嘆いていても始まらない。
-魔石を吸収することで自己進化できると知った俺は、念動スキルを駆使して近くのゴブリンを狩り始めた！`,
-      translatedContent: `Vào thời khắc lấy lại được ý thức, tôi thấy mình đang bị cắm thẳng đứng giữa một thảo nguyên bao la xa lạ.
-Xung quanh không một bóng người, chỉ có từng cơn gió nhè nhẹ thổi qua ngọn cỏ rì rào.
-Tôi cố gắng cử động tay chân, nhưng hoàn toàn không cảm nhận được chút cảm giác nào.
-Bởi vì thân thể tôi lúc này... được cấu tạo hoàn toàn bằng lưỡi kiếm thép sắc lạnh và chuôi kiếm chạm khắc hoa văn tinh xảo!
-『Kích hoạt kỹ năng Giám định ―― Tên gọi: Ma Kiếm Có Trí Tuệ (Intelligence Weapon)』
-Âm thanh thông báo vô cảm đột ngột vang vọng trong tâm trí khiến tôi chết lặng.
-Có vẻ như sau khi bị xe tải đâm trúng và lìa đời, tôi đã chuyển sinh sang thế giới kỳ ảo này dưới hình dạng một thanh kiếm mất rồi.
-Thế nhưng ngồi than thở cũng chẳng giải quyết được gì.
-Sau khi phát hiện mình có thể tự tiến hóa bằng cách hấp thụ ma thạch từ ma thú, tôi lập tức vận dụng kỹ năng Niệm Động, bay lượn trên không trung bắt đầu cuộc đi săn bầy Goblin gần đó!`,
-      translationStatus: 'translated',
-      wordCount: 310,
-      createdAt: new Date(Date.now() - 86400000).toISOString(),
-      translatedAt: new Date(Date.now() - 86400000 * 0.9).toISOString(),
-    },
-    {
-      id: 'chap-tk-2',
-      novelId: 'seed-tai-sinh-kiem-2',
-      chapterNumber: 2,
-      title: '第2話 黒猫族の少女との出会い',
-      translatedTitle: 'Chương 2: Cuộc Gặp Gỡ Với Thiếu Nữ Hắc Miêu Tộc',
-      sourceUrl: 'https://ncode.syosetu.com/n6006cw/2/',
-      rawContent: `幾多の魔物を狩り、数々のスキルを習得した俺だったが、ある日調子に乗って魔力枯渇の台地に突き刺さって動けなくなってしまった。
-完全に抜け出せなくなって数日後、悲鳴が聞こえた。
-見ると、巨大な二頭の魔獣に追われる、ボロボロの服を着た黒い猫耳の少女が逃げ込んでくるではないか。
-少女は首に奴隷の首輪を巻かれ、力尽きて俺の足元に倒れ込んだ。
-「お願い……力を……」
-少女が俺の柄に手を伸ばした瞬間、眩い光が二人を包み込んだ！`,
-      translatedContent: `Sau khi săn lùng vô số ma thú và lĩnh hội hàng loạt kỹ năng bá đạo, một ngày nọ vì quá tự tin, tôi đã lỡ cắm ngập vào mảnh đất hoang tàn bị cạn kiệt ma lực, khiến bản thân kẹt cứng không thể nhúc nhích.
-Kẹt lại suốt mấy ngày trời, đột nhiên tôi nghe thấy tiếng la hét thất thanh từ phía xa.
-Nhìn kỹ lại, một thiếu nữ mang đôi tai mèo đen mặc bộ đồ rách rưới đang hoảng loạn chạy trốn khỏi sự truy đuổi của hai con ma thú khổng lồ hai đầu.
-Trên cổ cô bé còn đeo chiếc vòng xiềng xích của nô lệ, kiệt sức ngã quỵ ngay bên cạnh chuôi kiếm của tôi.
-"Xin hãy... ban cho tôi sức mạnh..."
-Khoảnh khắc bàn tay nhỏ nhắn của cô bé chạm vào chuôi kiếm của tôi, một luồng ánh sáng rực rỡ chói lòa đã bao trùm lấy cả hai!`,
-      translationStatus: 'translated',
-      wordCount: 285,
-      createdAt: new Date(Date.now() - 86400000 * 0.8).toISOString(),
-      translatedAt: new Date(Date.now() - 86400000 * 0.7).toISOString(),
-    },
-  ],
-};
-
-function sanitizeFirestoreId(id: string): string {
-  if (!id) return `id_${Date.now()}`;
-  return id.replace(/[^a-zA-Z0-9_\-]/g, '_').slice(0, 120);
-}
-
 class ServerStorage {
-  private state: StorageState;
+  private state: StorageState = { novels: {}, chapters: {} };
   private isHydrating: boolean = false;
 
   constructor() {
-    this.state = {
-      novels: {},
-      chapters: {},
-    };
     this.loadState();
   }
 
@@ -275,41 +34,25 @@ class ServerStorage {
       if (fs.existsSync(DB_FILE)) {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         const data = JSON.parse(raw);
-        if (data && data.novels && Object.keys(data.novels).length > 0) {
-          // Sanitize all chapters to remove any previously persisted duplicate prefixes
-          if (data.chapters) {
-            Object.keys(data.chapters).forEach(nId => {
-              data.chapters[nId] = sanitizeChapters(data.chapters[nId]);
-            });
-          }
-          this.state = data;
-          if (isSupabaseConfigured()) {
-            this.hydrateFromSupabase();
-          } else {
-            this.hydrateFromFirestore();
-          }
-          return;
+        if (data && typeof data === 'object') {
+          this.state = {
+            novels: data.novels || {},
+            chapters: data.chapters || {},
+          };
+          // Filter out legacy dummy seed novels if present
+          delete this.state.novels['seed-kiem-ton-1'];
+          delete this.state.novels['seed-tai-sinh-kiem-2'];
+          delete this.state.chapters['seed-kiem-ton-1'];
+          delete this.state.chapters['seed-tai-sinh-kiem-2'];
         }
       }
     } catch {
-      // Fallback
+      this.state = { novels: {}, chapters: {} };
     }
 
-    // Seed defaults with sanitized chapter titles
-    INITIAL_SEED_NOVELS.forEach(n => {
-      this.state.novels[n.id] = n;
-    });
-    this.state.chapters = {};
-    Object.keys(INITIAL_SEED_CHAPTERS).forEach(nId => {
-      this.state.chapters[nId] = sanitizeChapters(INITIAL_SEED_CHAPTERS[nId]);
-    });
-    this.saveState();
-
-    // Hydrate from Supabase or Firestore in background
+    // Hydrate directly from Supabase on server startup
     if (isSupabaseConfigured()) {
       this.hydrateFromSupabase();
-    } else {
-      this.hydrateFromFirestore();
     }
   }
 
@@ -318,12 +61,10 @@ class ServerStorage {
     this.isHydrating = true;
     try {
       const novels = await fetchSupabaseNovels();
-      if (novels && novels.length > 0) {
+      if (novels && Array.isArray(novels)) {
+        this.state.novels = {};
         novels.forEach(n => {
-          this.state.novels[n.id] = {
-            ...(this.state.novels[n.id] || {}),
-            ...n,
-          };
+          this.state.novels[n.id] = n;
         });
         this.saveState();
       }
@@ -334,11 +75,6 @@ class ServerStorage {
     }
   }
 
-  /**
-   * Two-way automatic synchronization with Supabase:
-   * 1. If Supabase has novels, syncs them to local storage (and prunes remote deletions)
-   * 2. If Supabase is empty but local storage has novels, auto-seeds Supabase
-   */
   public async syncWithSupabase(): Promise<{
     success: boolean;
     configured: boolean;
@@ -358,74 +94,29 @@ class ServerStorage {
 
     try {
       const remoteNovels = await fetchSupabaseNovels();
+      this.state.novels = {};
+      const remoteIds = new Set(remoteNovels.map(n => n.id));
 
-      if (remoteNovels.length > 0) {
-        const remoteIds = new Set(remoteNovels.map(n => n.id));
-
-        // 1. Update or insert all novels from Supabase
-        for (const remoteNovel of remoteNovels) {
-          const current = this.state.novels[remoteNovel.id] || {};
-          this.state.novels[remoteNovel.id] = {
-            ...current,
-            ...remoteNovel,
-          };
-
-          // Fetch chapters if not yet cached locally
-          if (!this.state.chapters[remoteNovel.id] || this.state.chapters[remoteNovel.id].length === 0) {
-            try {
-              const remoteChaps = await fetchSupabaseChapters(remoteNovel.id);
-              if (remoteChaps && remoteChaps.length > 0) {
-                this.state.chapters[remoteNovel.id] = sanitizeChapters(remoteChaps);
-              }
-            } catch {
-              // Non-fatal
-            }
-          }
-        }
-
-        // 2. Prune local novels that have been deleted in Supabase (remote is authoritative)
-        Object.keys(this.state.novels).forEach(localId => {
-          if (!remoteIds.has(localId)) {
-            delete this.state.novels[localId];
-            delete this.state.chapters[localId];
-          }
-        });
-
-        this.saveState();
-        return {
-          success: true,
-          configured: true,
-          message: `Đã đồng bộ ${remoteNovels.length} truyện từ cơ sở dữ liệu Supabase`,
-          syncedNovelsCount: remoteNovels.length,
-          syncedChaptersCount: Object.values(this.state.chapters).reduce((acc, c) => acc + c.length, 0),
-        };
-      } else {
-        // Supabase is empty (0 novels) - upload local library to Supabase
-        const localNovels = Object.values(this.state.novels);
-        let uploadedNovels = 0;
-        let uploadedChapters = 0;
-
-        for (const novel of localNovels) {
-          const ok = await saveSupabaseNovel(novel);
-          if (ok) uploadedNovels++;
-
-          const chaps = this.state.chapters[novel.id] || [];
-          if (chaps.length > 0) {
-            const chOk = await saveSupabaseChapters(chaps);
-            if (chOk) uploadedChapters += chaps.length;
-          }
-        }
-
-        return {
-          success: true,
-          configured: true,
-          message: uploadedNovels > 0
-            ? `Đã tải lên ${uploadedNovels} truyện đồng bộ sang cơ sở dữ liệu Supabase`
-            : 'Cơ sở dữ liệu Supabase đã kết nối và sẵn sàng',
-          syncedNovelsCount: uploadedNovels,
-          syncedChaptersCount: uploadedChapters,
-        };
+      for (const remoteNovel of remoteNovels) {
+        this.state.novels[remoteNovel.id] = remoteNovel;
       }
+
+      // Prune local cached chapters that no longer exist in Supabase
+      Object.keys(this.state.chapters).forEach(id => {
+        if (!remoteIds.has(id)) {
+          delete this.state.chapters[id];
+        }
+      });
+
+      this.saveState();
+
+      return {
+        success: true,
+        configured: true,
+        message: `Đã đồng bộ ${remoteNovels.length} truyện từ cơ sở dữ liệu Supabase`,
+        syncedNovelsCount: remoteNovels.length,
+        syncedChaptersCount: Object.values(this.state.chapters).reduce((acc, c) => acc + c.length, 0),
+      };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn('Sync with Supabase note:', msg);
@@ -436,30 +127,6 @@ class ServerStorage {
         syncedNovelsCount: 0,
         syncedChaptersCount: 0,
       };
-    }
-  }
-
-  public async hydrateFromFirestore(): Promise<void> {
-    if (this.isHydrating) return;
-    this.isHydrating = true;
-    try {
-      const snap = await getDocs(collection(db, 'novels'));
-      if (!snap.empty) {
-        snap.forEach(docSnap => {
-          const data = docSnap.data() as Novel;
-          if (data && data.id) {
-            this.state.novels[data.id] = {
-              ...this.state.novels[data.id],
-              ...data,
-            };
-          }
-        });
-        this.saveState();
-      }
-    } catch (err) {
-      console.warn('Firestore hydration note:', err);
-    } finally {
-      this.isHydrating = false;
     }
   }
 
@@ -487,124 +154,48 @@ class ServerStorage {
     });
   }
 
-  public getNovelById(id: string): Novel | null {
-    const novel = this.state.novels[id];
-    if (!novel) return null;
-    const chapters = this.getChapters(id);
-    return {
-      ...novel,
-      chaptersCount: Math.max(novel.chaptersCount || 0, chapters.length),
-      translatedChaptersCount: Math.max(novel.translatedChaptersCount || 0, chapters.filter(c => c.translationStatus === 'translated').length),
-      chapters,
-    };
+  /**
+   * Supabase-first authoritative novels fetcher
+   */
+  public async getAllNovelsAsync(): Promise<Novel[]> {
+    if (isSupabaseConfigured()) {
+      try {
+        const remoteNovels = await fetchSupabaseNovels();
+        if (Array.isArray(remoteNovels)) {
+          this.state.novels = {};
+          remoteNovels.forEach(n => {
+            this.state.novels[n.id] = n;
+          });
+          this.saveState();
+          return remoteNovels;
+        }
+      } catch (err) {
+        console.warn('getAllNovelsAsync Supabase note:', err);
+      }
+    }
+    return this.getAllNovels();
   }
 
   public getNovel(id: string): Novel | null {
-    return this.getNovelById(id);
+    return this.state.novels[id] || null;
   }
 
-  private async saveNovelToFirestore(novel: Novel): Promise<void> {
-    try {
-      const safeId = sanitizeFirestoreId(novel.id);
-      const firestorePayload = {
-        id: safeId,
-        title: (novel.title || 'Truyện không tên').slice(0, 300),
-        originalTitle: (novel.originalTitle || '').slice(0, 300),
-        author: (novel.author || 'Khuyết danh').slice(0, 200),
-        description: (novel.description || '').slice(0, 10000),
-        coverUrl: (novel.coverUrl || '').slice(0, 2000),
-        sourceUrl: (novel.sourceUrl || '').slice(0, 2000),
-        sourceDomain: (novel.sourceDomain || '').slice(0, 200),
-        originalLanguage: novel.originalLanguage || 'auto',
-        targetLanguage: novel.targetLanguage || 'vi',
-        status: novel.status || 'ongoing',
-        chaptersCount: typeof novel.chaptersCount === 'number' && novel.chaptersCount >= 0 ? novel.chaptersCount : 0,
-        translatedChaptersCount: typeof novel.translatedChaptersCount === 'number' && novel.translatedChaptersCount >= 0 ? novel.translatedChaptersCount : 0,
-        lastReadChapterNumber: novel.lastReadChapterNumber || 1,
-        createdAt: novel.createdAt || new Date().toISOString(),
-        updatedAt: novel.updatedAt || new Date().toISOString(),
-      };
-      await setDoc(doc(db, 'novels', safeId), firestorePayload, { merge: true });
-    } catch (e) {
-      console.warn('Firestore setDoc novel warning:', e);
-    }
+  public getNovelById(id: string): Novel | null {
+    return this.getNovel(id);
   }
 
-  public saveNovel(novel: Novel): Novel {
-    const existing = this.state.novels[novel.id];
-    const updated: Novel = {
-      ...existing,
-      ...novel,
-      updatedAt: new Date().toISOString(),
-    };
-    this.state.novels[novel.id] = updated;
-    this.saveState();
-
-    // Persist to Supabase if configured, otherwise fallback to Firebase Firestore
+  public async getNovelByIdAsync(id: string): Promise<Novel | null> {
+    const existing = this.getNovel(id);
+    if (existing) return existing;
     if (isSupabaseConfigured()) {
-      saveSupabaseNovel(updated).catch(e => console.warn('Supabase saveNovel warning:', e));
-    } else {
-      this.saveNovelToFirestore(updated).catch(() => {});
+      await this.getAllNovelsAsync();
+      return this.getNovel(id);
     }
-
-    return updated;
-  }
-
-  public async saveNovelAsync(novel: Novel): Promise<Novel> {
-    const updated = this.saveNovel(novel);
-    if (isSupabaseConfigured()) {
-      await saveSupabaseNovel(updated);
-    } else {
-      await this.saveNovelToFirestore(updated);
-    }
-    return updated;
-  }
-
-  public deleteNovel(id: string): boolean {
-    const existedLocally = Boolean(this.state.novels[id]);
-    delete this.state.novels[id];
-    delete this.state.chapters[id];
-    this.saveState();
-
-    if (isSupabaseConfigured()) {
-      deleteSupabaseNovel(id).catch(e => console.warn('Supabase deleteNovel warning:', e));
-    } else {
-      const safeId = sanitizeFirestoreId(id);
-      deleteDoc(doc(db, 'novels', safeId)).catch(e => {
-        console.warn('Firestore deleteDoc novel warning:', e);
-      });
-    }
-    return true;
-  }
-
-  public async deleteNovelAsync(id: string): Promise<boolean> {
-    const existedLocally = Boolean(this.state.novels[id]);
-    delete this.state.novels[id];
-    delete this.state.chapters[id];
-    this.saveState();
-
-    let remoteOk = false;
-    if (isSupabaseConfigured()) {
-      try {
-        remoteOk = await deleteSupabaseNovel(id);
-      } catch (e) {
-        console.warn('Supabase deleteNovelAsync error:', e);
-      }
-    } else {
-      try {
-        const safeId = sanitizeFirestoreId(id);
-        await deleteDoc(doc(db, 'novels', safeId));
-        remoteOk = true;
-      } catch (e) {
-        console.warn('Firestore deleteDoc async error:', e);
-      }
-    }
-
-    return existedLocally || remoteOk;
+    return null;
   }
 
   public getChapters(novelId: string): Chapter[] {
-    const list = (this.state.chapters[novelId] || []).sort((a, b) => a.chapterNumber - b.chapterNumber);
+    const list = this.state.chapters[novelId] || [];
     return sanitizeChapters(list);
   }
 
@@ -612,12 +203,10 @@ class ServerStorage {
     let list = this.getChapters(novelId);
     const expectedCount = this.state.novels[novelId]?.chaptersCount || 0;
 
-    // Return cached chapters only if not forcing refresh, not empty, and cached count matches or exceeds expected count
     if (!forceRefresh && list.length > 0 && (expectedCount === 0 || list.length >= expectedCount)) {
       return sanitizeChapters(list);
     }
 
-    // Fallback 1: check Supabase (supports up to 10,000+ chapters via chunked range pagination)
     if (isSupabaseConfigured()) {
       try {
         const remote = await fetchSupabaseChapters(novelId);
@@ -632,25 +221,6 @@ class ServerStorage {
       } catch (e) {
         console.warn('Supabase getChaptersAsync warning:', e);
       }
-    }
-
-    // Fallback 2: check Firestore subcollection
-    try {
-      const safeNovelId = sanitizeFirestoreId(novelId);
-      const snap = await getDocs(collection(db, 'novels', safeNovelId, 'chapters'));
-      if (!snap.empty) {
-        const remoteChapters: Chapter[] = [];
-        snap.forEach(d => {
-          remoteChapters.push(d.data() as Chapter);
-        });
-        remoteChapters.sort((a, b) => a.chapterNumber - b.chapterNumber);
-        const cleanRemote = sanitizeChapters(remoteChapters);
-        this.state.chapters[novelId] = cleanRemote;
-        this.saveState();
-        return cleanRemote;
-      }
-    } catch (e) {
-      console.warn('Firestore chapters query fallback warning:', e);
     }
 
     return list;
@@ -669,9 +239,17 @@ class ServerStorage {
       try {
         const remote = await fetchSupabaseChapter(novelId, chapterNumber);
         if (remote) {
-          if (!this.state.chapters[novelId]) this.state.chapters[novelId] = [];
-          this.state.chapters[novelId].push(remote);
-          this.state.chapters[novelId].sort((a, b) => a.chapterNumber - b.chapterNumber);
+          if (!this.state.chapters[novelId]) {
+            this.state.chapters[novelId] = [];
+          }
+          const idx = this.state.chapters[novelId].findIndex(c => c.chapterNumber === chapterNumber);
+          if (idx >= 0) {
+            this.state.chapters[novelId][idx] = remote;
+          } else {
+            this.state.chapters[novelId].push(remote);
+            this.state.chapters[novelId].sort((a, b) => a.chapterNumber - b.chapterNumber);
+          }
+          this.saveState();
           return remote;
         }
       } catch (e) {
@@ -682,28 +260,49 @@ class ServerStorage {
     return null;
   }
 
-  private async saveChapterToFirestore(chapter: Chapter): Promise<void> {
-    try {
-      const safeNovelId = sanitizeFirestoreId(chapter.novelId);
-      const safeChapId = sanitizeFirestoreId(chapter.id);
-      const cleanChap = sanitizeChapter(chapter);
-      const firestoreChapter = {
-        id: safeChapId,
-        novelId: safeNovelId,
-        chapterNumber: cleanChap.chapterNumber,
-        title: (cleanChap.title || `Chương ${cleanChap.chapterNumber}`).slice(0, 300),
-        translatedTitle: (cleanChap.translatedTitle || '').slice(0, 300),
-        sourceUrl: (cleanChap.sourceUrl || '').slice(0, 2000),
-        rawContent: (cleanChap.rawContent || '').slice(0, 195000),
-        translatedContent: (cleanChap.translatedContent || '').slice(0, 195000),
-        translationStatus: cleanChap.translationStatus || 'pending',
-        wordCount: cleanChap.wordCount || 0,
-        createdAt: cleanChap.createdAt || new Date().toISOString(),
-      };
-      await setDoc(doc(db, 'novels', safeNovelId, 'chapters', safeChapId), firestoreChapter, { merge: true });
-    } catch (e) {
-      console.warn('Firestore chapter setDoc error:', e);
+  public saveNovel(novel: Novel): Novel {
+    const existing = this.state.novels[novel.id];
+    const chaps = this.state.chapters[novel.id] || [];
+    const translatedCount = chaps.filter(c => c.translationStatus === 'translated').length;
+
+    const updated: Novel = {
+      ...novel,
+      chaptersCount: Math.max(novel.chaptersCount || 0, chaps.length, existing?.chaptersCount || 0),
+      translatedChaptersCount: Math.max(novel.translatedChaptersCount || 0, translatedCount, existing?.translatedChaptersCount || 0),
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.state.novels[novel.id] = updated;
+    this.saveState();
+    return updated;
+  }
+
+  public async saveNovelAsync(novel: Novel): Promise<Novel> {
+    const saved = this.saveNovel(novel);
+    if (isSupabaseConfigured()) {
+      await saveSupabaseNovel(saved);
     }
+    return saved;
+  }
+
+  public deleteNovel(id: string): boolean {
+    const existed = Boolean(this.state.novels[id]);
+    delete this.state.novels[id];
+    delete this.state.chapters[id];
+    this.saveState();
+    return existed;
+  }
+
+  public async deleteNovelAsync(id: string): Promise<boolean> {
+    this.deleteNovel(id);
+    if (isSupabaseConfigured()) {
+      try {
+        await deleteSupabaseNovel(id);
+      } catch (e) {
+        console.warn('Supabase deleteNovel error:', e);
+      }
+    }
+    return true;
   }
 
   public saveChapter(chapter: Chapter, novelFallback?: Novel): Chapter {
@@ -711,43 +310,29 @@ class ServerStorage {
     if (!this.state.chapters[cleanChap.novelId]) {
       this.state.chapters[cleanChap.novelId] = [];
     }
+
     const list = this.state.chapters[cleanChap.novelId];
     const existingIndex = list.findIndex(c => c.chapterNumber === cleanChap.chapterNumber);
+
     if (existingIndex >= 0) {
-      list[existingIndex] = { ...list[existingIndex], ...cleanChap };
+      list[existingIndex] = {
+        ...list[existingIndex],
+        ...cleanChap,
+      };
     } else {
       list.push(cleanChap);
+      list.sort((a, b) => a.chapterNumber - b.chapterNumber);
     }
 
-    // Always keep chapters strictly sorted by chapterNumber ascending
-    list.sort((a, b) => a.chapterNumber - b.chapterNumber);
-
-    // If novelFallback is provided and not in local state, add it
-    if (novelFallback && !this.state.novels[cleanChap.novelId]) {
-      this.state.novels[cleanChap.novelId] = { ...novelFallback };
-    }
-
-    // Update novel chapter counts
     const parentNovel = this.state.novels[cleanChap.novelId] || novelFallback;
     if (parentNovel) {
-      parentNovel.chaptersCount = Math.max(parentNovel.chaptersCount || 0, list.length);
+      parentNovel.chaptersCount = list.length;
       parentNovel.translatedChaptersCount = list.filter(c => c.translationStatus === 'translated').length;
       parentNovel.updatedAt = new Date().toISOString();
       this.state.novels[cleanChap.novelId] = parentNovel;
-      if (isSupabaseConfigured()) {
-        saveSupabaseNovel(parentNovel).catch(() => {});
-      }
     }
 
     this.saveState();
-
-    // Persist to Supabase if configured, otherwise Firestore
-    if (isSupabaseConfigured()) {
-      saveSupabaseChapters([cleanChap], parentNovel).catch(e => console.warn('Supabase saveChapter warning:', e));
-    } else {
-      this.saveChapterToFirestore(cleanChap).catch(() => {});
-    }
-
     return cleanChap;
   }
 
@@ -756,8 +341,6 @@ class ServerStorage {
     const parentNovel = this.state.novels[saved.novelId] || novelFallback;
     if (isSupabaseConfigured()) {
       await saveSupabaseChapters([saved], parentNovel);
-    } else {
-      await this.saveChapterToFirestore(saved);
     }
     return saved;
   }
@@ -766,10 +349,6 @@ class ServerStorage {
     const cleanList = sanitizeChapters(chapters);
     for (const ch of cleanList) {
       this.saveChapter(ch, novelFallback);
-    }
-    if (isSupabaseConfigured()) {
-      const parentNovel = novelFallback || (cleanList.length > 0 ? this.state.novels[cleanList[0].novelId] : undefined);
-      saveSupabaseChapters(cleanList, parentNovel).catch(e => console.warn('Supabase saveChapters warning:', e));
     }
   }
 
@@ -781,13 +360,6 @@ class ServerStorage {
     const parentNovel = novelFallback || (cleanList.length > 0 ? this.state.novels[cleanList[0].novelId] : undefined);
     if (isSupabaseConfigured()) {
       await saveSupabaseChapters(cleanList, parentNovel);
-    } else {
-      // Batch save to Firestore in chunks of 5
-      const CHUNK_SIZE = 5;
-      for (let i = 0; i < cleanList.length; i += CHUNK_SIZE) {
-        const chunk = cleanList.slice(i, i + CHUNK_SIZE);
-        await Promise.allSettled(chunk.map(ch => this.saveChapterToFirestore(ch)));
-      }
     }
   }
 
@@ -799,7 +371,6 @@ class ServerStorage {
   ): Chapter | null {
     const ch = this.getChapter(novelId, chapterNumber);
     if (!ch) return null;
-
     ch.translatedTitle = cleanChapterTitle(translatedTitle, chapterNumber);
     ch.translatedContent = translatedContent;
     ch.translationStatus = 'translated';
@@ -810,12 +381,10 @@ class ServerStorage {
 
   public deleteChapter(novelId: string, chapterNumber: number): boolean {
     if (!this.state.chapters[novelId]) return false;
-
     const initialLen = this.state.chapters[novelId].length;
     this.state.chapters[novelId] = this.state.chapters[novelId].filter(
       c => c.chapterNumber !== chapterNumber
     );
-
     const deleted = this.state.chapters[novelId].length < initialLen;
     if (deleted) {
       const parentNovel = this.state.novels[novelId];
@@ -834,25 +403,13 @@ class ServerStorage {
 
   public async deleteChapterAsync(novelId: string, chapterNumber: number): Promise<boolean> {
     this.deleteChapter(novelId, chapterNumber);
-
-    let supabaseDeleted = false;
     if (isSupabaseConfigured()) {
       try {
-        supabaseDeleted = await deleteSupabaseChapter(novelId, chapterNumber);
+        await deleteSupabaseChapter(novelId, chapterNumber);
       } catch (err) {
         console.warn('Supabase deleteChapterAsync error:', err);
       }
     }
-
-    // Also attempt delete from Firestore
-    try {
-      const safeNovelId = sanitizeFirestoreId(novelId);
-      const safeChapId = sanitizeFirestoreId(`chap-${novelId}-${chapterNumber}`);
-      await deleteDoc(doc(db, 'novels', safeNovelId, 'chapters', safeChapId));
-    } catch {
-      // Non-fatal
-    }
-
     return true;
   }
 }

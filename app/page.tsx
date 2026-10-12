@@ -76,11 +76,12 @@ export default function Home() {
     }
   };
 
-  // On page load: load local immediately, then auto-sync with Supabase in background
+  // On page load: load directly and exclusively from Supabase
   useEffect(() => {
     let ignore = false;
 
-    const loadAndSync = async () => {
+    const loadFromSupabase = async () => {
+      setIsLoading(true);
       try {
         const { ok, data } = await safeFetchJson<any>('/api/novels');
         if (!ignore && ok && data?.success && Array.isArray(data.data)) {
@@ -91,23 +92,9 @@ export default function Home() {
       } finally {
         if (!ignore) setIsLoading(false);
       }
-
-      // Automatically sync with Supabase in background
-      try {
-        const { ok: syncOk, data: syncData } = await safeFetchJson<any>('/api/supabase/sync', { method: 'POST' });
-        if (!ignore && syncOk && syncData?.success && Array.isArray(syncData.data)) {
-          setNovels(syncData.data);
-          if (syncData.configured) {
-            setSyncToast(`✓ ${syncData.message || 'Đã tự động đồng bộ dữ liệu với Supabase'}`);
-            setTimeout(() => setSyncToast(null), 4000);
-          }
-        }
-      } catch (err) {
-        console.warn('Supabase sync note:', err);
-      }
     };
 
-    loadAndSync();
+    loadFromSupabase();
 
     return () => {
       ignore = true;
