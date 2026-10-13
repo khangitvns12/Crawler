@@ -47,6 +47,47 @@ export default function NovelDetailModal({
   const [description, setDescription] = useState(novel.description);
   const [coverUrl, setCoverUrl] = useState(novel.coverUrl);
   const [isSaving, setIsSaving] = useState(false);
+  const [isTranslatingMeta, setIsTranslatingMeta] = useState(false);
+
+  const handleAiTranslateMetadata = async () => {
+    setIsTranslatingMeta(true);
+    try {
+      const rawTitle = novel.originalTitle || novel.title;
+      const { ok, data } = await safeFetchJson<any>('/api/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          novelId: novel.id,
+          title: rawTitle,
+          description: novel.description,
+          author: novel.author,
+          genre: novel.translationGenre || 'xianxia',
+          mode: 'metadata',
+        }),
+      });
+
+      if (ok && data?.data) {
+        const trans = data.data;
+        if (trans.translatedTitle) setTitle(trans.translatedTitle);
+        if (trans.translatedAuthor) setAuthor(trans.translatedAuthor);
+        if (trans.translatedDescription) setDescription(trans.translatedDescription);
+
+        const updated: Novel = {
+          ...novel,
+          originalTitle: novel.originalTitle || (trans.translatedTitle !== rawTitle ? rawTitle : undefined),
+          title: trans.translatedTitle || novel.title,
+          author: trans.translatedAuthor || novel.author,
+          description: trans.translatedDescription || novel.description,
+          updatedAt: new Date().toISOString(),
+        };
+        onUpdateNovel(updated);
+      }
+    } catch (err) {
+      console.warn('AI translate metadata error:', err);
+    } finally {
+      setIsTranslatingMeta(false);
+    }
+  };
 
   // Large chapter collection controls (supporting up to 10,000+ chapters)
   const [searchTerm, setSearchTerm] = useState('');
@@ -280,6 +321,16 @@ export default function NovelDetailModal({
                 Thông tin chi tiết tác phẩm
               </h3>
               <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleAiTranslateMetadata}
+                  disabled={isTranslatingMeta}
+                  className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                  title="Dịch tự động Tên truyện, Tác giả và Mô tả sang Tiếng Việt bằng Gemini AI"
+                >
+                  <Sparkles className={`h-3.5 w-3.5 text-amber-400 ${isTranslatingMeta ? 'animate-spin' : ''}`} />
+                  <span>{isTranslatingMeta ? 'Đang dịch AI...' : 'Dịch AI tên & mô tả'}</span>
+                </button>
                 {novel.sourceUrl && (
                   <button
                     type="button"
@@ -294,7 +345,7 @@ export default function NovelDetailModal({
                 )}
                 <button
                   onClick={() => setIsEditingMeta(!isEditingMeta)}
-                  className="text-xs font-semibold text-indigo-400 hover:underline flex items-center gap-1"
+                  className="text-xs font-semibold text-slate-300 hover:text-white hover:underline flex items-center gap-1"
                 >
                   <Edit3 className="h-3.5 w-3.5" />
                   <span>{isEditingMeta ? 'Hủy sửa' : 'Chỉnh sửa'}</span>

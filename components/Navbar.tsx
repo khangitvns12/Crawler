@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { BookOpen, Compass, Sparkles, Terminal, BookMarked, Download, KeyRound, Server } from 'lucide-react';
-import { getActiveApiKeyStrings, GEMINI_KEYS_CHANGED_EVENT } from '@/lib/api-key-storage';
+import { useActiveKeysCount } from '@/lib/client-hooks';
 
 export type ActiveTab = 'library' | 'crawler' | 'bgcrawler' | 'translate' | 'api';
 
@@ -29,20 +29,7 @@ export default function Navbar({
   onOpenApiKeyModal,
   isSyncing = false,
 }: NavbarProps) {
-  const [activeKeysCount, setActiveKeysCount] = useState<number>(() => {
-    if (typeof window !== 'undefined') {
-      return getActiveApiKeyStrings().length;
-    }
-    return 0;
-  });
-
-  useEffect(() => {
-    const handler = () => {
-      setActiveKeysCount(getActiveApiKeyStrings().length);
-    };
-    window.addEventListener(GEMINI_KEYS_CHANGED_EVENT, handler);
-    return () => window.removeEventListener(GEMINI_KEYS_CHANGED_EVENT, handler);
-  }, []);
+  const activeKeysCount = useActiveKeysCount();
 
   const tabs = [
     { id: 'library' as ActiveTab, label: 'Thư viện truyện', icon: BookMarked },

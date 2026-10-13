@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { Novel } from '@/types/novel';
 import { safeFetchJson } from '@/lib/safe-json';
+import { useWindowOrigin } from '@/lib/client-hooks';
 import { 
   Terminal, Globe, Copy, Check, ExternalLink, Play, 
   Code2, Download, Upload, ShieldCheck, Smartphone, BookOpen,
@@ -24,7 +25,7 @@ export default function ApiDocsView({ novels, onImportNovels }: ApiDocsViewProps
   const [isLoadingTest, setIsLoadingTest] = useState(false);
   const [testStatusCode, setTestStatusCode] = useState<number | null>(null);
 
-  const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+  const baseUrl = useWindowOrigin();
   const opdsFeedUrl = `${baseUrl}/api/v1/opds`;
 
   const handleCopy = (text: string, key: string) => {

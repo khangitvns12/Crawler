@@ -5,7 +5,8 @@ import { Novel, Chapter, CookieConfig, CrawlerConfig, TranslationGenre } from '@
 import { SITE_PRESETS, findPresetForUrl } from '@/lib/preset-extractors';
 import { cleanChapterTitle, cleanChapterContent, formatChapterDisplayTitle, sortChapters } from '@/lib/chapter-utils';
 import { safeFetchJson } from '@/lib/safe-json';
-import { getActiveApiKeyStrings, GEMINI_KEYS_CHANGED_EVENT } from '@/lib/api-key-storage';
+import { useActiveKeysCount } from '@/lib/client-hooks';
+import { getActiveApiKeyStrings } from '@/lib/api-key-storage';
 import { 
   Compass, ShieldCheck, Key, RefreshCw, AlertCircle, Play, 
   Pause, CheckCircle2, ChevronDown, ChevronUp, Globe, FileText,
@@ -42,18 +43,7 @@ export default function CrawlerView({
   const [customProxy, setCustomProxy] = useState(resumeNovel?.cookieConfig?.customProxy || '');
 
   // Live active Gemini keys count
-  const [activeKeysCount, setActiveKeysCount] = useState<number>(() => {
-    if (typeof window !== 'undefined') {
-      return getActiveApiKeyStrings().length;
-    }
-    return 0;
-  });
-
-  React.useEffect(() => {
-    const handler = () => setActiveKeysCount(getActiveApiKeyStrings().length);
-    window.addEventListener(GEMINI_KEYS_CHANGED_EVENT, handler);
-    return () => window.removeEventListener(GEMINI_KEYS_CHANGED_EVENT, handler);
-  }, []);
+  const activeKeysCount = useActiveKeysCount();
 
   // Pagination Configuration
   const [fetchAllPages, setFetchAllPages] = useState(true);

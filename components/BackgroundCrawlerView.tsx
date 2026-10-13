@@ -62,15 +62,53 @@ export default function BackgroundCrawlerView({
   // Quick Inspection State
   const [isInspecting, setIsInspecting] = useState<boolean>(false);
   const [inspectError, setInspectError] = useState<string | null>(null);
+  const [isTranslatingPreview, setIsTranslatingPreview] = useState<boolean>(false);
   const [inspectedData, setInspectedData] = useState<{
     title?: string;
+    translatedTitle?: string;
     author?: string;
+    translatedAuthor?: string;
     coverUrl?: string;
     description?: string;
+    translatedDescription?: string;
     totalChapters?: number;
     firstChapterTitle?: string;
     lastChapterTitle?: string;
   } | null>(null);
+
+  const handleTranslatePreview = async () => {
+    if (!inspectedData?.title) return;
+    setIsTranslatingPreview(true);
+    try {
+      const { ok, data } = await safeFetchJson<any>('/api/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: inspectedData.title,
+          description: inspectedData.description,
+          author: inspectedData.author,
+          genre: translationGenre,
+          mode: 'metadata',
+        }),
+      });
+      if (ok && data?.data) {
+        setInspectedData(prev =>
+          prev
+            ? {
+                ...prev,
+                translatedTitle: data.data.translatedTitle,
+                translatedAuthor: data.data.translatedAuthor,
+                translatedDescription: data.data.translatedDescription,
+              }
+            : null
+        );
+      }
+    } catch (err) {
+      console.warn('Translate preview error:', err);
+    } finally {
+      setIsTranslatingPreview(false);
+    }
+  };
 
   // Background Jobs state
   const [jobs, setJobs] = useState<BackgroundCrawlJob[]>([]);
@@ -225,7 +263,7 @@ export default function BackgroundCrawlerView({
             userAgent,
             customProxy: customProxy.trim() || undefined,
           },
-          preferredNovelTitle: inspectedData?.title,
+          preferredNovelTitle: inspectedData?.translatedTitle || undefined,
         }),
       });
 
@@ -466,19 +504,47 @@ export default function BackgroundCrawlerView({
                     />
                   )}
                   <div className="min-w-0 flex-1 space-y-1">
-                    <h3 className="text-xs font-bold text-white truncate">{inspectedData.title}</h3>
-                    <p className="text-[11px] text-slate-300 truncate">Tác giả: {inspectedData.author || 'Khuyết danh'}</p>
-                    <div className="flex items-center gap-2 pt-0.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <h3 className="text-xs font-bold text-white truncate">
+                        {inspectedData.translatedTitle || inspectedData.title}
+                      </h3>
+                      {inspectedData.translatedTitle && (
+                        <span className="rounded bg-indigo-500/20 border border-indigo-500/30 px-1.5 py-0.2 text-[9px] font-semibold text-indigo-300">
+                          Đã dịch AI
+                        </span>
+                      )}
+                    </div>
+                    {inspectedData.translatedTitle && inspectedData.translatedTitle !== inspectedData.title && (
+                      <p className="text-[10px] text-slate-400 truncate italic">
+                        Tên gốc: {inspectedData.title}
+                      </p>
+                    )}
+                    <p className="text-[11px] text-slate-300 truncate">
+                      Tác giả: {inspectedData.translatedAuthor || inspectedData.author || 'Khuyết danh'}
+                    </p>
+                    <div className="flex items-center gap-2 pt-0.5 flex-wrap">
                       <span className="rounded-md bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-400 border border-emerald-500/20">
                         ✓ Tìm thấy {inspectedData.totalChapters?.toLocaleString()} chương
                       </span>
+                      {!inspectedData.translatedTitle && /[\u4e00-\u9fa5\u3040-\u30ff]/.test(inspectedData.title || '') && (
+                        <button
+                          type="button"
+                          onClick={handleTranslatePreview}
+                          disabled={isTranslatingPreview}
+                          className="rounded-md bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 px-2 py-0.5 text-[10px] font-semibold flex items-center gap-1 transition-colors"
+                        >
+                          <Sparkles className="h-3 w-3 text-amber-400" />
+                          {isTranslatingPreview ? 'Đang dịch AI...' : 'Dịch AI tên & mô tả'}
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
-                {inspectedData.description && (
-                  <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed border-t border-indigo-500/10 pt-2">
-                    {inspectedData.description}
-                  </p>
+                {(inspectedData.translatedDescription || inspectedData.description) && (
+                  <div className="text-[11px] text-slate-300 line-clamp-3 leading-relaxed border-t border-indigo-500/10 pt-2">
+                    <span className="text-slate-400 font-medium">Mô tả: </span>
+                    {inspectedData.translatedDescription || inspectedData.description}
+                  </div>
                 )}
               </motion.div>
             )}
@@ -966,7 +1032,7 @@ export default function BackgroundCrawlerView({
                           {job.failedChaptersCount > 0 && (
                             <span className="text-red-400">Lỗi: {job.failedChaptersCount} chương</span>
                           )}
-                          <span>Khởi tạo: {new Date(job.createdAt).toLocaleTimeString()}</span>
+                          <span suppressHydrationWarning>Khởi tạo: {new Date(job.createdAt).toLocaleTimeString()}</span>
                         </div>
                       </div>
 
@@ -1032,7 +1098,7 @@ export default function BackgroundCrawlerView({
 
                                   return (
                                     <div key={log.id} className="flex items-start gap-2 leading-relaxed">
-                                      <span className="text-slate-600 shrink-0 text-[10px]">
+                                      <span suppressHydrationWarning className="text-slate-600 shrink-0 text-[10px]">
                                         {new Date(log.timestamp).toLocaleTimeString()}
                                       </span>
                                       <span className={color}>{log.text}</span>

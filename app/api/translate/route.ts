@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
             translationGenre: genre || existing.translationGenre,
             updatedAt: new Date().toISOString(),
           };
-          serverStorage.saveNovel(updatedNovel);
+          await serverStorage.saveNovelAsync(updatedNovel);
         }
       }
 

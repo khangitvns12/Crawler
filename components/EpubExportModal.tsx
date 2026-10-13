@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { Novel } from '@/types/novel';
+import { useWindowOrigin } from '@/lib/client-hooks';
 import { 
   X, Download, BookOpen, Check, Copy, ExternalLink, 
   Smartphone, Monitor, Tablet, RefreshCw
@@ -18,8 +19,10 @@ export default function EpubExportModal({ novel, onClose }: EpubExportModalProps
   const [isDownloading, setIsDownloading] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
 
+  const origin = useWindowOrigin();
+
   const downloadApiUrl = `/api/v1/novels/${novel.id}/epub?type=${contentType}&toc=${includeToc}`;
-  const fullDownloadUrl = typeof window !== 'undefined' ? `${window.location.origin}${downloadApiUrl}` : downloadApiUrl;
+  const fullDownloadUrl = origin ? `${origin}${downloadApiUrl}` : downloadApiUrl;
 
   const handleDownload = async () => {
     setIsDownloading(true);

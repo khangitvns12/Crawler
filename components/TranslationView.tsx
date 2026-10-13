@@ -4,7 +4,8 @@ import React, { useState, useEffect } from 'react';
 import { Novel, Chapter, TranslationGenre } from '@/types/novel';
 import { cleanChapterTitle, formatChapterDisplayTitle } from '@/lib/chapter-utils';
 import { safeFetchJson } from '@/lib/safe-json';
-import { getActiveApiKeyStrings, GEMINI_KEYS_CHANGED_EVENT } from '@/lib/api-key-storage';
+import { useActiveKeysCount } from '@/lib/client-hooks';
+import { getActiveApiKeyStrings } from '@/lib/api-key-storage';
 import { 
   Sparkles, BookOpen, CheckCircle2, Clock, AlertCircle, RefreshCw, 
   Save, Play, Sliders, Plus, Trash2, Edit3, Eye, FileText, KeyRound,
@@ -28,20 +29,7 @@ export default function TranslationView({
   onReadChapter,
   onOpenApiKeyModal,
 }: TranslationViewProps) {
-  const [activeKeysCount, setActiveKeysCount] = useState<number>(() => {
-    if (typeof window !== 'undefined') {
-      return getActiveApiKeyStrings().length;
-    }
-    return 0;
-  });
-
-  useEffect(() => {
-    const handler = () => {
-      setActiveKeysCount(getActiveApiKeyStrings().length);
-    };
-    window.addEventListener(GEMINI_KEYS_CHANGED_EVENT, handler);
-    return () => window.removeEventListener(GEMINI_KEYS_CHANGED_EVENT, handler);
-  }, []);
+  const activeKeysCount = useActiveKeysCount();
 
   // Active novel ID selection
   const [internalNovelId, setInternalNovelId] = useState<string>('');

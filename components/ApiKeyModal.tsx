@@ -45,18 +45,17 @@ interface ApiKeyModalProps {
 }
 
 export default function ApiKeyModal({ onClose }: ApiKeyModalProps) {
-  const [keys, setKeys] = useState<GeminiApiKey[]>(() => {
-    if (typeof window !== 'undefined') {
-      return getStoredApiKeys();
-    }
-    return [];
-  });
-  const [strategy, setStrategy] = useState<KeyRotationStrategy>(() => {
-    if (typeof window !== 'undefined') {
-      return getStoredRotationStrategy();
-    }
-    return 'round_robin';
-  });
+  const [keys, setKeys] = useState<GeminiApiKey[]>(() => getStoredApiKeys());
+  const [strategy, setStrategy] = useState<KeyRotationStrategy>(() => getStoredRotationStrategy());
+
+  useEffect(() => {
+    const handler = () => {
+      setKeys(getStoredApiKeys());
+      setStrategy(getStoredRotationStrategy());
+    };
+    window.addEventListener(GEMINI_KEYS_CHANGED_EVENT, handler);
+    return () => window.removeEventListener(GEMINI_KEYS_CHANGED_EVENT, handler);
+  }, []);
   const [mode, setMode] = useState<'single' | 'bulk'>('single');
 
   // Single key input form
@@ -560,7 +559,7 @@ export default function ApiKeyModal({ onClose }: ApiKeyModalProps) {
                               {isCopied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
                             </button>
                             {k.lastTestedAt && (
-                              <span className="text-[10px] text-slate-500 hidden sm:inline">
+                              <span suppressHydrationWarning className="text-[10px] text-slate-500 hidden sm:inline">
                                 • Kiểm tra {new Date(k.lastTestedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
                               </span>
                             )}

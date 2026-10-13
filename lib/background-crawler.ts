@@ -18,6 +18,7 @@ import {
   saveSupabaseNovel,
   saveSupabaseChapter,
   fetchSupabaseApiKeys,
+  fetchActiveSupabaseApiKeyStrings,
   isSupabaseConfigured,
 } from './supabase';
 import { translateChapter, translateNovelContent, translateNovelMetadata } from './gemini';
@@ -192,6 +193,78 @@ async function runBackgroundWorker(
       appendLog(job, `✨ Tính năng tự động dịch AI được bật với ${activeApiKeys.length} khóa Gemini API luân phiên.`, 'info');
     } else {
       appendLog(job, '✨ Tính năng tự động dịch AI được bật (sử dụng cấu hình Gemini của máy chủ).', 'info');
+    }
+
+    // Automatically translate novel title, author, and description if needed
+    try {
+      const currentNovel = serverStorage.getNovel(job.novelId);
+      if (currentNovel) {
+        const rawTitle = currentNovel.originalTitle || currentNovel.title || job.novelOriginalTitle || job.novelTitle;
+        const rawDesc = currentNovel.description || '';
+        const rawAuthor = currentNovel.author || '';
+
+        const hasCjkTitle = /[\u4e00-\u9fa5\u3040-\u30ff]/.test(currentNovel.title);
+        const hasCjkDesc = /[\u4e00-\u9fa5\u3040-\u30ff]/.test(rawDesc);
+        const needsTranslation = hasCjkTitle || hasCjkDesc || (!currentNovel.originalTitle && rawTitle);
+
+        if (needsTranslation || hasCjkTitle || hasCjkDesc) {
+          appendLog(job, '📖 Đang tự động dịch tên truyện và văn án giới thiệu sang Tiếng Việt...', 'info');
+          const metaTrans = await translateNovelMetadata({
+            title: rawTitle,
+            description: rawDesc,
+            author: rawAuthor,
+            genre: job.translationGenre || 'xianxia',
+            apiKeys: activeApiKeys.length > 0 ? activeApiKeys : undefined,
+          });
+
+          let modified = false;
+          if (metaTrans.translatedTitle && metaTrans.translatedTitle.trim()) {
+            const newTitle = metaTrans.translatedTitle.trim();
+            if (newTitle !== currentNovel.title) {
+              if (!currentNovel.originalTitle) {
+                currentNovel.originalTitle = rawTitle;
+              }
+              currentNovel.title = newTitle;
+              job.novelTitle = newTitle;
+              job.novelOriginalTitle = currentNovel.originalTitle;
+              modified = true;
+            }
+          }
+
+          if (metaTrans.translatedDescription && metaTrans.translatedDescription.trim()) {
+            const newDesc = metaTrans.translatedDescription.trim();
+            if (newDesc !== currentNovel.description) {
+              currentNovel.description = newDesc;
+              modified = true;
+            }
+          }
+
+          if (metaTrans.translatedAuthor && metaTrans.translatedAuthor.trim()) {
+            const newAuthor = metaTrans.translatedAuthor.trim();
+            if (newAuthor !== currentNovel.author) {
+              currentNovel.author = newAuthor;
+              job.novelAuthor = newAuthor;
+              modified = true;
+            }
+          }
+
+          if (modified) {
+            currentNovel.updatedAt = new Date().toISOString();
+            serverStorage.saveNovel(currentNovel);
+            if (isSupabaseConfigured()) {
+              await saveSupabaseNovel(currentNovel);
+            }
+            persistJobsToDisk();
+            appendLog(job, `✨ Đã dịch tên truyện: "${currentNovel.title}" | Tác giả: ${currentNovel.author}`, 'success');
+            if (currentNovel.description) {
+              appendLog(job, `📝 Đã dịch văn án / mô tả giới thiệu truyện thành công.`, 'success');
+            }
+          }
+        }
+      }
+    } catch (metaErr) {
+      console.warn('[BackgroundCrawler] translateNovelMetadata in processJob note:', metaErr);
+      appendLog(job, `⚠️ Lưu ý: Không thể dịch tự động tên/văn án: ${metaErr instanceof Error ? metaErr.message : String(metaErr)}`, 'warning');
     }
   }
 
@@ -445,23 +518,51 @@ export const backgroundCrawler = {
 
     // 3. Resolve Novel Metadata & ID
     const domain = new URL(cleanUrl).hostname;
-    let finalTitle = preferredNovelTitle || inspection.title || 'Truyện không tên';
     const originalTitle = inspection.title || '';
+    let finalTitle = inspection.title || 'Truyện không tên';
+    let finalDescription = inspection.description || '';
+    let finalAuthor = inspection.author || 'Khuyết danh';
 
-    // If auto-translate is enabled, translate metadata title to Vietnamese
+    // If preferred title is explicitly specified and not equal to the raw Chinese title
+    if (preferredNovelTitle && preferredNovelTitle.trim() && preferredNovelTitle !== inspection.title) {
+      finalTitle = preferredNovelTitle.trim();
+    }
+
+    // Fetch active Gemini API keys
+    let activeApiKeys: string[] = [];
+    if (autoTranslate) {
+      try {
+        const keys = await fetchSupabaseApiKeys();
+        activeApiKeys = keys
+          .filter(k => k.isActive && k.status !== 'invalid')
+          .map(k => k.key.trim())
+          .filter(Boolean);
+      } catch {
+        // ignore
+      }
+    }
+
+    // If auto-translate is enabled, translate metadata title, description, author to Vietnamese
     if (autoTranslate && originalTitle) {
       try {
         const metaTrans = await translateNovelMetadata({
           title: originalTitle,
-          description: inspection.description,
-          author: inspection.author,
+          description: finalDescription,
+          author: finalAuthor,
           genre: translationGenre,
+          apiKeys: activeApiKeys.length > 0 ? activeApiKeys : undefined,
         });
-        if (metaTrans.translatedTitle) {
-          finalTitle = metaTrans.translatedTitle;
+        if (metaTrans.translatedTitle && metaTrans.translatedTitle.trim()) {
+          finalTitle = metaTrans.translatedTitle.trim();
         }
-      } catch {
-        // non-fatal
+        if (metaTrans.translatedDescription && metaTrans.translatedDescription.trim()) {
+          finalDescription = metaTrans.translatedDescription.trim();
+        }
+        if (metaTrans.translatedAuthor && metaTrans.translatedAuthor.trim()) {
+          finalAuthor = metaTrans.translatedAuthor.trim();
+        }
+      } catch (metaErr) {
+        console.warn('[BackgroundCrawler] startBackgroundCrawl translateNovelMetadata note:', metaErr);
       }
     }
 
@@ -470,8 +571,8 @@ export const backgroundCrawler = {
       id: novelId,
       title: finalTitle,
       originalTitle: originalTitle !== finalTitle ? originalTitle : undefined,
-      author: inspection.author || 'Khuyết danh',
-      description: inspection.description || '',
+      author: finalAuthor,
+      description: finalDescription,
       coverUrl: inspection.coverUrl || '',
       sourceUrl: cleanUrl,
       sourceDomain: domain,
@@ -506,7 +607,7 @@ export const backgroundCrawler = {
       novelId,
       novelTitle: finalTitle,
       novelOriginalTitle: originalTitle !== finalTitle ? originalTitle : undefined,
-      novelAuthor: novelMeta.author,
+      novelAuthor: finalAuthor,
       novelCoverUrl: novelMeta.coverUrl,
       sourceUrl: cleanUrl,
       sourceDomain: domain,
