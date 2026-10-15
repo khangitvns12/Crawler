@@ -49,6 +49,12 @@ export function normalizeNovelUrl(rawUrl: string): string {
       parsed.hostname = 'www.novel543.com';
       return parsed.href;
     }
+
+    // hjwzw: ensure hjwzw domains use tw.hjwzw.com
+    if (/hjwzw/i.test(host)) {
+      parsed.hostname = 'tw.hjwzw.com';
+      return parsed.href;
+    }
   } catch {
     // ignore
   }
@@ -70,6 +76,24 @@ export function getDomainMirrors(rawUrl: string): string[] {
       const candidates = [
         'www.novel543.com',
         'novel543.com',
+      ];
+      for (const m of candidates) {
+        if (!host.includes(m)) {
+          const alt = new URL(normUrl);
+          alt.hostname = m;
+          if (!mirrors.includes(alt.href)) {
+            mirrors.push(alt.href);
+          }
+        }
+      }
+    }
+
+    // hjwzw family
+    if (/hjwzw/i.test(host)) {
+      const candidates = [
+        'tw.hjwzw.com',
+        'www.hjwzw.com',
+        'hjwzw.com',
       ];
       for (const m of candidates) {
         if (!host.includes(m)) {
@@ -474,12 +498,21 @@ function cleanContentHtml(html: string): string {
     .replace(/本章未完，请点击下一页继续阅读/gi, '')
     .replace(/(?:溫馨提示|温馨提示)\s*[：:].*$/gim, '')
     .replace(/應廣大讀者的要求.*VIP會員免廣告.*$/gim, '')
-    .replace(/點按屏幕中間即可呼喚出菜單.*$/gim, '');
+    .replace(/點按屏幕中間即可呼喚出菜單.*$/gim, '')
+    .replace(/請記住本站域名[:：]?\s*(?:黃金屋|黄金屋)?/gi, '')
+    .replace(/请记住本站域名[:：]?\s*(?:黃金屋|黄金屋)?/gi, '')
+    .replace(/快捷鍵\s*[:：].*$/gim, '')
+    .replace(/回車鍵\s*[:：].*$/gim, '');
 
-  const lines = text
+  let lines = text
     .split('\n')
     .map(line => line.trim())
     .filter(line => line.length > 0 && !/^loadAdv\s*\(/i.test(line));
+
+  // Strip leading lines that repeat the chapter title or novel title
+  if (lines.length > 1 && /^(?:第[0-9一二两兩三四五六七八九十百千万萬億亿]+章|Chapter|\d+).*$/i.test(lines[0])) {
+    lines.shift();
+  }
 
   const rawParagraphs = lines.join('\n\n');
   return cleanChapterContent(rawParagraphs);
@@ -877,6 +910,24 @@ export async function inspectNovel(
     }
   }
 
+  // hjwzw URL normalization: book page (/Book/{id}) has metadata, catalog (/Book/Chapter/{id}) has ALL chapters
+  const isHjwzw = /hjwzw/i.test(normalizedUrl);
+  if (isHjwzw) {
+    try {
+      const parsedUrl = new URL(normalizedUrl);
+      const hostname = parsedUrl.hostname;
+      const bookIdMatch = normalizedUrl.match(/(?:Book|Read|Chapter)\/(\d+)/i);
+      if (bookIdMatch) {
+        const bookId = bookIdMatch[1];
+        detailUrl = `https://${hostname}/Book/${bookId}`;
+        catalogUrl = `https://${hostname}/Book/Chapter/${bookId}`;
+        mainUrl = detailUrl;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   const { html, usedUrl } = await fetchHtmlWithCookies({ url: mainUrl, cookieConfig });
   const activeBaseUrl = usedUrl || mainUrl;
   const $ = cheerio.load(html);
@@ -894,11 +945,13 @@ export async function inspectNovel(
   }
   if (title) {
     title = title
-      .replace(/\s*[-|_|–]\s*(TruyenFull|Metruyenchu|Tangthuvien|NovelFull|Syosetu|Biquge|69shuba|69shu|novel543|稷下書院|新笔趣阁.*|Đọc truyện).*$/i, '')
+      .replace(/\s*[-|_|–]\s*(TruyenFull|Metruyenchu|Tangthuvien|NovelFull|Syosetu|Biquge|69shuba|69shu|novel543|稷下書院|黃金屋.*|黄[金金]屋.*|hjwzw.*|新笔趣阁.*|Đọc truyện).*$/i, '')
       .replace(/\s*章[節节]列表.*$/i, '')
       .replace(/目录最新章节.*$/i, '')
       .replace(/最新章节.*$/i, '')
       .replace(/全文免费阅读.*$/i, '')
+      .replace(/\/.*txt下載-黃金屋中文/i, '')
+      .replace(/\/.*txt下载-黄金屋中文/i, '')
       .trim();
   }
 
@@ -1005,6 +1058,54 @@ export async function inspectNovel(
       // If ul.all didn't yield chapters, fallback to extractChaptersFromCheerio
       if (chapters.length === 0) {
         extractChaptersFromCheerio($cat, config, dirBase, chapters);
+      }
+    } catch {
+      extractChaptersFromCheerio($, config, activeBaseUrl, chapters);
+    }
+  } else if (isHjwzw) {
+    // For hjwzw: Fetch dedicated catalog page (/Book/Chapter/{bookId}) which contains all 100% chapters in #tbchapterlist
+    try {
+      const targetCatUrl = catalogUrl || mainUrl.replace(/\/Book\/(\d+)/i, '/Book/Chapter/$1');
+      const { html: catHtml, usedUrl: catUsedUrl } = await fetchHtmlWithCookies({ url: targetCatUrl, cookieConfig });
+      const $cat = cheerio.load(catHtml);
+      const catBase = catUsedUrl || targetCatUrl;
+
+      // Extract all chapters directly from #tbchapterlist table
+      const listLinks = $cat('#tbchapterlist a, a[href*="/Book/Read/"]');
+      listLinks.each((_, el) => {
+        const link = $cat(el);
+        const href = link.attr('href');
+        if (!href) return;
+        let fullUrl = href;
+        try {
+          fullUrl = new URL(href, catBase).href;
+        } catch {
+          return;
+        }
+        // hjwzw anchor text is clean: e.g. "第一章 隕落的天才"
+        let chapTitle = link.text().trim();
+        if (!chapTitle) {
+          const rawTitle = link.attr('title') || '';
+          chapTitle = rawTitle.replace(/\s+(?:小說名|書名|作者|更新時間).*$/i, '').trim();
+        }
+        if (!chapTitle) return;
+
+        const parsedNum = parseChapterNumber(chapTitle);
+        const assignedNum = parsedNum !== null ? parsedNum : chapters.length + 1;
+        chapTitle = cleanChapterTitle(chapTitle, assignedNum);
+
+        if (!chapters.some(c => c.url === fullUrl)) {
+          chapters.push({
+            number: assignedNum,
+            title: chapTitle,
+            url: fullUrl,
+          });
+        }
+      });
+
+      // If #tbchapterlist didn't yield chapters, fallback to extractChaptersFromCheerio
+      if (chapters.length === 0) {
+        extractChaptersFromCheerio($cat, config, catBase, chapters);
       }
     } catch {
       extractChaptersFromCheerio($, config, activeBaseUrl, chapters);
@@ -1140,6 +1241,11 @@ export async function scrapeChapterContent(
 
   // Also remove h1 and h2 from content containers so title is not duplicated in text
   $('h1, h2, .chapter-title').remove();
+
+  // For hjwzw: remove the embedded header novel link inside content container before extracting HTML
+  if (/hjwzw/i.test(activeChapterUrl)) {
+    $('div[style*="font-size: 20px"] a[href*="/Book/"], div[style*="text-indent: 2em"] a[href*="/Book/"]').remove();
+  }
 
   // 3. Extract Content
   let contentHtml = '';

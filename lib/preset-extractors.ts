@@ -97,6 +97,28 @@ export const SITE_PRESETS: SitePreset[] = [
     notes: 'Trang tiểu thuyết mạng Trung Quốc (稷下書院 - novel543.com). Hỗ trợ tự động bóc tách danh mục /dir, nội dung .content và tự động ghép các chương bị chia cắt nhiều trang (_1_2.html).',
   },
   {
+    id: 'hjwzw',
+    name: 'Huangjinwu (黃金屋 / Hoàng Kim Ốc - tw.hjwzw.com Raw)',
+    domainPattern: 'hjwzw',
+    exampleUrl: 'https://tw.hjwzw.com/Book/1642',
+    config: {
+      titleSelector: 'meta[property="og:novel:book_name"], meta[property="og:title"], h1, .book_info h1',
+      authorSelector: 'meta[property="og:novel:author"], a[href*="/List/"]',
+      coverSelector: 'meta[property="og:image"], img[src*="/images/id/"]',
+      descriptionSelector: 'meta[property="og:description"], meta[name="Description"], #intro, .intro',
+      chapterListSelector: '#tbchapterlist a, a[href*="/Book/Read/"]',
+      chapterLinkSelector: 'a',
+      chapterTitleSelector: 'table h1, h1, meta[property="og:title"]',
+      chapterContentSelector: 'div[style*="font-size: 20px"][style*="line-height: 30px"], div[style*="text-indent: 2em"], #AllySite + div',
+      excludeSelectors: [
+        'script', 'style', 'ins', '#AllySite', '#Pan_Ad1',
+        '.btn1', '#colorSetting', '#btnSetStyle'
+      ],
+      delayMs: 800,
+    },
+    notes: 'Trang tiểu thuyết raw chữ Hán phồn thể Đài Loan Hoàng Kim Ốc (tw.hjwzw.com). Hệ thống tự động chuyển đổi sang trang danh mục đầy đủ /Book/Chapter/{id} để cào 100% mục lục chương và bóc tách nội dung chuẩn xác.',
+  },
+  {
     id: 'truyenfull',
     name: 'TruyenFull (Việt Nam)',
     domainPattern: 'truyenfull',

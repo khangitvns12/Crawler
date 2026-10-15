@@ -148,12 +148,12 @@ export default function CrawlSingleChapterModal({
               type="url"
               value={chapterUrl}
               onChange={e => setChapterUrl(e.target.value)}
-              placeholder="Ví dụ: https://www.xbiquge.info/135/135260/258618.html hoặc 69shuba, truyenfull..."
+              placeholder="Ví dụ: https://tw.hjwzw.com/Book/Read/1642,530186 hoặc xbiquge, 69shuba, truyenfull..."
               required
               className="w-full rounded-xl border border-slate-700 bg-slate-950 p-2.5 text-xs text-white placeholder-slate-600 focus:border-indigo-500 focus:outline-none"
             />
             <p className="text-[11px] text-slate-500 mt-1">
-              Hỗ trợ tự động bóc tách chuẩn xác mọi trang web (xbiquge, 69shuba, truyenfull, syosetu...).
+              Hỗ trợ tự động bóc tách chuẩn xác mọi trang web (tw.hjwzw.com, xbiquge, 69shuba, novel543, truyenfull, syosetu...).
             </p>
           </div>
 

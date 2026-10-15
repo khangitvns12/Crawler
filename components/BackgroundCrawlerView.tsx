@@ -412,7 +412,7 @@ export default function BackgroundCrawlerView({
                     setUrl(e.target.value);
                     setInspectedData(null);
                   }}
-                  placeholder="https://www.novel543.com/0312506018/ hoặc 69shuba, biquge..."
+                  placeholder="https://tw.hjwzw.com/Book/1642 hoặc novel543, 69shuba, biquge..."
                   className="w-full rounded-xl border border-slate-800 bg-slate-950/80 px-3.5 py-2.5 pr-24 text-xs text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 />
                 <button
@@ -438,6 +438,16 @@ export default function BackgroundCrawlerView({
               {/* Quick Presets */}
               <div className="flex flex-wrap gap-1.5 pt-1">
                 <span className="text-[11px] text-slate-400 self-center mr-1">Mẫu nhanh:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUrl('https://tw.hjwzw.com/Book/1642');
+                    setInspectedData(null);
+                  }}
+                  className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-2 py-0.5 text-[10px] text-yellow-300 hover:border-yellow-500/60 transition-colors"
+                >
+                  🇹🇼 Hjwzw (黃金屋)
+                </button>
                 <button
                   type="button"
                   onClick={() => {

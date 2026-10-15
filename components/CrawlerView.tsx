@@ -181,7 +181,7 @@ export default function CrawlerView({
         setTranslationGenre('lightnovel');
       } else if (checkUrl.includes('novelfull') || checkUrl.includes('royalroad')) {
         setTranslationGenre('webnovel');
-      } else if (checkUrl.includes('69shuba') || checkUrl.includes('69shu') || checkUrl.includes('biquge') || checkUrl.includes('novel543')) {
+      } else if (checkUrl.includes('69shuba') || checkUrl.includes('69shu') || checkUrl.includes('biquge') || checkUrl.includes('novel543') || checkUrl.includes('hjwzw')) {
         setTranslationGenre('xianxia');
       }
 
@@ -692,7 +692,7 @@ export default function CrawlerView({
                 type="text"
                 value={url}
                 onChange={e => handleUrlChange(e.target.value)}
-                placeholder="Ví dụ: https://truyenfull.io/dau-pha-thuong-khung/ hoặc https://www.69shuba.com/book/90442.htm"
+                placeholder="Ví dụ: https://tw.hjwzw.com/Book/1642 hoặc https://www.69shuba.com/book/90442.htm hoặc TruyenFull..."
                 className="w-full rounded-xl border border-slate-800 bg-slate-950 py-2.5 pl-10 pr-4 text-xs text-slate-200 placeholder-slate-500 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
               />
             </div>
@@ -739,6 +739,13 @@ export default function CrawlerView({
                 className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] text-slate-300 hover:border-slate-700 hover:text-white transition-colors"
               >
                 🇨🇳 69Shuba (Trung Raw)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleUrlChange('https://tw.hjwzw.com/Book/1642')}
+                className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-2.5 py-1 text-[11px] text-yellow-300 hover:border-yellow-500/50 hover:text-yellow-200 transition-colors"
+              >
+                🇹🇼 Hjwzw (黃金屋)
               </button>
               <button
                 type="button"

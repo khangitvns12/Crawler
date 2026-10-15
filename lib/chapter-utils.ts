@@ -180,7 +180,11 @@ export function stripSourceWatermarks(content?: string | null): string {
     /^\s*(?:truyện full|truyenfull|metruyenchu|tangthuvien|truyenchu|nettruyen|sstruyen|truyenyy|wikidich|truyenhdt|dtruyen|vipvandan|bachngocsach|gacsach|santruyen|webtruyen)\s*(?:\.(?:vn|com|net|org|vip|info|cc|top|me))?\s*[\.\:\-–—]*$/i,
     
     // Chinese source and promotional watermarks
-    /^\s*(?:请记住本书首发域名|一秒记住|手机版阅读网址|手机用户请访问|本书首发域名|最新域名|最新章节尽在).*$/i,
+    /^\s*(?:请记住本书首发域名|請記住本書首發域名|一秒记住|一秒記住|手机版阅读网址|手機版閱讀網址|手机用户请访问|本書首發域名|最新域名|最新章节尽在).*$/i,
+    /^\s*(?:請記住本站域名|请记住本站域名|黃金屋|黄金屋|黃金書屋|hjwzw)\b.*$/i,
+    /^\s*快捷鍵\s*[:：].*$/i,
+    /^\s*(?:上一章|下一章|回車鍵|返回書頁|返回书页|回車鍵:返回書頁).*$/i,
+    /^\s*(?:繁體版|簡體版)\s*[:：].*$/i,
     /^\s*(?:69书吧|笔趣阁|顶点小说|飘天文学|八零电子书|纵横中文网|起点中文网|飞卢小说网)\s*(?:www\.[a-z0-9\.\-]+)?.*$/i,
     /^\s*(?:来源|出处|转载自|首发于)\s*[:：].*$/i,
     /^\s*(?:求推荐票|求月票|求打赏|求订阅|求鲜花|求收藏|求自订).*$/i,
@@ -299,7 +303,7 @@ export function parseChineseNumber(str: string): number {
   if (/^\d+$/.test(str)) return parseInt(str, 10);
 
   const digitMap: Record<string, number> = {
-    '零': 0, '〇': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4,
+    '零': 0, '〇': 0, '一': 1, '二': 2, '两': 2, '兩': 2, '三': 3, '四': 4,
     '五': 5, '六': 6, '七': 7, '八': 8, '九': 9,
   };
 
@@ -323,12 +327,12 @@ export function parseChineseNumber(str: string): number {
     } else if (char === '千') {
       section += (currentDigit === 0 ? 1 : currentDigit) * 1000;
       currentDigit = 0;
-    } else if (char === '万') {
+    } else if (char === '万' || char === '萬') {
       section += currentDigit;
       total += section * 10000;
       section = 0;
       currentDigit = 0;
-    } else if (char === '亿') {
+    } else if (char === '亿' || char === '億') {
       section += currentDigit;
       total += section * 100000000;
       section = 0;
@@ -346,6 +350,7 @@ export function parseChineseNumber(str: string): number {
  * e.g. "Chương 45: Đại Đạo" -> 45
  * e.g. "Chapter 123" -> 123
  * e.g. "第一千二百三十四章" -> 1234
+ * e.g. "二十七" -> 27
  */
 export function parseChapterNumber(title: string): number | null {
   if (!title || typeof title !== 'string') return null;
@@ -364,10 +369,17 @@ export function parseChapterNumber(title: string): number | null {
     if (!isNaN(num) && num > 0) return num;
   }
 
-  // 3. Chinese numerals: 第一千二百三十四章, 第五百六十八回
-  const zhNumMatch = title.match(/第\s*([零〇一二两三四五六七八九十百千万\d]+)\s*[章話话回節节]/);
+  // 3. Chinese numerals with prefix: 第一千二百三十四章, 第五百六十八回, 第一章
+  const zhNumMatch = title.match(/第\s*([零〇一二两兩三四五六七八九十百千万萬億亿\d]+)\s*[章話话回節节]/);
   if (zhNumMatch) {
     const parsed = parseChineseNumber(zhNumMatch[1]);
+    if (parsed > 0) return parsed;
+  }
+
+  // 3b. Standalone Chinese numerals (e.g. "一", "二十七" without 第...章):
+  const standaloneZh = title.trim().match(/^([零〇一二两兩三四五六七八九十百千万萬億亿]+)$/);
+  if (standaloneZh) {
+    const parsed = parseChineseNumber(standaloneZh[1]);
     if (parsed > 0) return parsed;
   }
 
