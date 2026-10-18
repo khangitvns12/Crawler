@@ -37,7 +37,7 @@ export async function POST(
       success = backgroundCrawler.pauseJob(jobId);
       message = success ? 'Đã tạm dừng tác vụ cào ngầm.' : 'Không thể tạm dừng tác vụ (có thể tác vụ không ở trạng thái đang chạy).';
     } else if (action === 'resume') {
-      success = backgroundCrawler.resumeJob(jobId);
+      success = await backgroundCrawler.resumeJob(jobId);
       message = success ? 'Đã tiếp tục tác vụ cào ngầm.' : 'Không thể tiếp tục tác vụ (có thể tác vụ không ở trạng thái tạm dừng).';
     } else if (action === 'cancel') {
       success = backgroundCrawler.cancelJob(jobId);

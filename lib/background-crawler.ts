@@ -650,29 +650,29 @@ async function launchOrResumeWorker(job: BackgroundCrawlJob): Promise<boolean> {
   }
 
   // Fetch or reconstruct novelMeta
-  let novelMeta = serverStorage.getNovel(job.novelId);
-  if (!novelMeta) {
-    novelMeta = await serverStorage.getNovelByIdAsync(job.novelId);
+  let existingNovel = serverStorage.getNovel(job.novelId);
+  if (!existingNovel) {
+    existingNovel = await serverStorage.getNovelByIdAsync(job.novelId);
   }
-  if (!novelMeta) {
-    novelMeta = {
-      id: job.novelId,
-      title: job.novelTitle,
-      originalTitle: job.novelOriginalTitle,
-      author: job.novelAuthor,
-      coverUrl: job.novelCoverUrl || '',
-      sourceUrl: job.sourceUrl,
-      sourceDomain: job.sourceDomain,
-      originalLanguage: 'zh',
-      targetLanguage: 'vi',
-      status: 'crawling',
-      chaptersCount: 0,
-      translatedChaptersCount: 0,
-      translationGenre: job.translationGenre || 'xianxia',
-      createdAt: job.createdAt,
-      updatedAt: new Date().toISOString(),
-    };
-  }
+
+  const novelMeta: Novel = existingNovel || {
+    id: job.novelId,
+    title: job.novelTitle,
+    originalTitle: job.novelOriginalTitle,
+    author: job.novelAuthor,
+    description: '',
+    coverUrl: job.novelCoverUrl || '',
+    sourceUrl: job.sourceUrl,
+    sourceDomain: job.sourceDomain,
+    originalLanguage: 'zh',
+    targetLanguage: 'vi',
+    status: 'crawling',
+    chaptersCount: 0,
+    translatedChaptersCount: 0,
+    translationGenre: job.translationGenre || 'xianxia',
+    createdAt: job.createdAt,
+    updatedAt: new Date().toISOString(),
+  };
 
   const runId = Math.random().toString(36).substring(2, 9);
   const abortController = new AbortController();
