@@ -147,6 +147,7 @@ export interface BackgroundCrawlJob {
 
 export interface CreateBackgroundJobParams {
   url: string;
+  novelId?: string;
   startChapter?: number;
   endChapter?: number;
   maxChapters?: number;

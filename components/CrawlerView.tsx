@@ -279,7 +279,7 @@ export default function CrawlerView({
 
     const preset = findPresetForUrl(url);
     const chaptersAccumulated: Chapter[] = [];
-    const novelId = resumeNovel ? resumeNovel.id : `novel-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    let novelId = resumeNovel ? resumeNovel.id : `novel-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
     // 1. Khởi tạo & Lưu hồ sơ truyện vào Supabase / Server storage trước khi bắt đầu cào các chương
     const domain = new URL(url).hostname;
@@ -399,11 +399,22 @@ export default function CrawlerView({
           body: JSON.stringify(currentNovel),
         });
       } else {
-        await fetch('/api/novels', {
+        const initRes = await fetch('/api/novels', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(currentNovel),
         });
+        const initData = await initRes.json();
+        if (initData?.data?.id) {
+          novelId = initData.data.id;
+          currentNovel = { ...currentNovel, ...initData.data };
+          if (initData.data.id !== currentNovel.id) {
+            setCrawlLogs(prev => [
+              { text: `🔄 Nhận diện bộ truyện đã có trong Thư viện: "${initData.data.title}" (ID: ${initData.data.id}). Tự động đồng bộ và cào nối tiếp vào truyện này.`, type: 'success' },
+              ...prev,
+            ]);
+          }
+        }
       }
       onNovelCrawled(currentNovel, []);
       setCrawlLogs(prev => [

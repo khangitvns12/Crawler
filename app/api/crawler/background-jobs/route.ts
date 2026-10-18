@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
 
     const {
       url,
+      novelId,
       startChapter,
       endChapter,
       maxChapters,
@@ -59,6 +60,7 @@ export async function POST(req: NextRequest) {
 
     const job = await backgroundCrawler.startJob({
       url: url.trim(),
+      novelId: novelId && typeof novelId === 'string' ? novelId.trim() : undefined,
       startChapter: typeof startChapter === 'number' ? startChapter : 1,
       endChapter: typeof endChapter === 'number' ? endChapter : undefined,
       maxChapters: typeof maxChapters === 'number' ? maxChapters : undefined,

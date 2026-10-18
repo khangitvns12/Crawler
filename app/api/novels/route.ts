@@ -26,29 +26,38 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Tên truyện không được để trống' }, { status: 400 });
     }
 
-    const id = novelData.id || `novel-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    // Check for existing matching novel first (Deduplication)
+    const existingMatch = serverStorage.findExistingNovel({
+      id: novelData.id,
+      sourceUrl: novelData.sourceUrl,
+      title: novelData.title,
+      originalTitle: novelData.originalTitle,
+    });
+
+    const id = existingMatch ? existingMatch.id : (novelData.id || `novel-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`);
     const now = new Date().toISOString();
 
     const novel: Novel = {
+      ...(existingMatch || {}),
       id,
       title: novelData.title.trim(),
-      originalTitle: novelData.originalTitle?.trim() || '',
-      author: novelData.author?.trim() || 'Khuyết danh',
-      description: novelData.description?.trim() || '',
-      coverUrl: novelData.coverUrl?.trim() || '',
-      sourceUrl: novelData.sourceUrl?.trim() || '',
-      sourceDomain: novelData.sourceDomain || (novelData.sourceUrl ? new URL(novelData.sourceUrl).hostname : 'custom'),
-      originalLanguage: novelData.originalLanguage || 'auto',
-      targetLanguage: novelData.targetLanguage || 'vi',
-      status: novelData.status || 'ongoing',
-      chaptersCount: novelData.chaptersCount || 0,
-      translatedChaptersCount: novelData.translatedChaptersCount || 0,
-      lastReadChapterNumber: novelData.lastReadChapterNumber || 1,
-      cookieConfig: novelData.cookieConfig,
-      crawlerConfig: novelData.crawlerConfig,
-      glossary: novelData.glossary || {},
-      translationGenre: novelData.translationGenre || 'general',
-      createdAt: novelData.createdAt || now,
+      originalTitle: novelData.originalTitle?.trim() || existingMatch?.originalTitle || '',
+      author: novelData.author?.trim() || existingMatch?.author || 'Khuyết danh',
+      description: novelData.description?.trim() || existingMatch?.description || '',
+      coverUrl: novelData.coverUrl?.trim() || existingMatch?.coverUrl || '',
+      sourceUrl: novelData.sourceUrl?.trim() || existingMatch?.sourceUrl || '',
+      sourceDomain: novelData.sourceDomain || existingMatch?.sourceDomain || (novelData.sourceUrl ? new URL(novelData.sourceUrl).hostname : 'custom'),
+      originalLanguage: novelData.originalLanguage || existingMatch?.originalLanguage || 'auto',
+      targetLanguage: novelData.targetLanguage || existingMatch?.targetLanguage || 'vi',
+      status: novelData.status || existingMatch?.status || 'ongoing',
+      chaptersCount: Math.max(novelData.chaptersCount || 0, existingMatch?.chaptersCount || 0),
+      translatedChaptersCount: Math.max(novelData.translatedChaptersCount || 0, existingMatch?.translatedChaptersCount || 0),
+      lastReadChapterNumber: novelData.lastReadChapterNumber || existingMatch?.lastReadChapterNumber || 1,
+      cookieConfig: novelData.cookieConfig || existingMatch?.cookieConfig,
+      crawlerConfig: novelData.crawlerConfig || existingMatch?.crawlerConfig,
+      glossary: { ...(existingMatch?.glossary || {}), ...(novelData.glossary || {}) },
+      translationGenre: novelData.translationGenre || existingMatch?.translationGenre || 'general',
+      createdAt: existingMatch?.createdAt || novelData.createdAt || now,
       updatedAt: now,
     };
 

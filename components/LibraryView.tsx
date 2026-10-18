@@ -40,6 +40,8 @@ export default function LibraryView({
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [showSupabaseModal, setShowSupabaseModal] = useState(false);
 
+  const [isReconciling, setIsReconciling] = useState(false);
+
   const handleSyncSupabase = async () => {
     setIsSyncing(true);
     setSyncStatus(null);
@@ -57,6 +59,25 @@ export default function LibraryView({
     } finally {
       setIsSyncing(false);
       setTimeout(() => setSyncStatus(null), 4000);
+    }
+  };
+
+  const handleReconcileDuplicates = async () => {
+    setIsReconciling(true);
+    setSyncStatus(null);
+    try {
+      const { ok, data, error } = await safeFetchJson<any>('/api/novels/reconcile', { method: 'POST' });
+      if (ok && data?.success) {
+        setSyncStatus(`✓ ${data.message || 'Đã kiểm tra trùng lặp xong'}`);
+        if (onRefreshNovels) await onRefreshNovels();
+      } else {
+        setSyncStatus(error || data?.message || 'Lỗi khi gộp truyện trùng lặp');
+      }
+    } catch {
+      setSyncStatus('Lỗi kết nối máy chủ');
+    } finally {
+      setIsReconciling(false);
+      setTimeout(() => setSyncStatus(null), 5000);
     }
   };
 
@@ -129,6 +150,18 @@ export default function LibraryView({
             <RefreshCw className={`h-3.5 w-3.5 text-emerald-400 ${isSyncing ? 'animate-spin' : ''}`} />
             <span className="hidden sm:inline">Đồng bộ Supabase</span>
             <span className="sm:hidden">Đồng bộ</span>
+          </button>
+
+          {/* Reconcile Duplicates Button */}
+          <button
+            onClick={handleReconcileDuplicates}
+            disabled={isReconciling}
+            className="flex items-center gap-1.5 rounded-xl border border-amber-500/40 bg-amber-950/30 px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-900/50 hover:border-amber-500 active:scale-95 disabled:opacity-50 transition-all shadow-sm"
+            title="Tự động quét và gộp các bản sao truyện trùng lặp, hợp nhất toàn bộ chương vào truyện gốc"
+          >
+            <Layers className={`h-3.5 w-3.5 text-amber-400 ${isReconciling ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">Gộp trùng lặp</span>
+            <span className="sm:hidden">Gộp trùng</span>
           </button>
 
           <button

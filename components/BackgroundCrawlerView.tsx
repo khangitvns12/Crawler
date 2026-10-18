@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Novel, TranslationGenre, BackgroundCrawlJob } from '@/types/novel';
 import { safeFetchJson } from '@/lib/safe-json';
 import { findPresetForUrl } from '@/lib/preset-extractors';
+import { getCanonicalNovelKey, areNovelsMatching } from '@/lib/crawler-engine';
 import {
   Server,
   Cpu,
@@ -25,39 +26,49 @@ import {
   Loader2,
   FolderOpen,
   ArrowRight,
+  RefreshCw,
+  Library,
+  X,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface BackgroundCrawlerViewProps {
+  initialNovel?: Novel | null;
+  onClearInitialNovel?: () => void;
   onOpenNovelDetail?: (novel: Novel) => void;
   onOpenReader?: (novel: Novel, chapterNum: number) => void;
   onNavigateToLibrary?: () => void;
 }
 
 export default function BackgroundCrawlerView({
+  initialNovel,
+  onClearInitialNovel,
   onOpenNovelDetail,
   onOpenReader,
   onNavigateToLibrary,
 }: BackgroundCrawlerViewProps) {
   // Input form state
-  const [url, setUrl] = useState('');
-  const [chapterMode, setChapterMode] = useState<'all' | 'first_n' | 'range'>('first_n');
+  const [url, setUrl] = useState(initialNovel?.sourceUrl || '');
+  const [selectedNovelId, setSelectedNovelId] = useState<string>(initialNovel?.id || '');
+  const [libraryNovels, setLibraryNovels] = useState<Novel[]>([]);
+  const [chapterMode, setChapterMode] = useState<'all' | 'first_n' | 'range'>(initialNovel ? 'range' : 'first_n');
   const [firstNCount, setFirstNCount] = useState<number>(50);
-  const [startChapter, setStartChapter] = useState<number>(1);
-  const [endChapter, setEndChapter] = useState<number>(100);
+  const [startChapter, setStartChapter] = useState<number>(initialNovel ? (initialNovel.chaptersCount || 0) + 1 : 1);
+  const [endChapter, setEndChapter] = useState<number>(initialNovel ? (initialNovel.chaptersCount || 0) + 100 : 100);
   const [delayMs, setDelayMs] = useState<number>(1200);
 
   // Auto translate state
   const [autoTranslate, setAutoTranslate] = useState<boolean>(true);
-  const [translationGenre, setTranslationGenre] = useState<TranslationGenre>('xianxia');
+  const [translationGenre, setTranslationGenre] = useState<TranslationGenre>(initialNovel?.translationGenre || 'xianxia');
 
   // Advanced Cookie / Proxy
   const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
-  const [cookieString, setCookieString] = useState<string>('');
+  const [cookieString, setCookieString] = useState<string>(initialNovel?.cookieConfig?.cookieString || '');
   const [userAgent, setUserAgent] = useState<string>(
+    initialNovel?.cookieConfig?.userAgent ||
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
   );
-  const [customProxy, setCustomProxy] = useState<string>('');
+  const [customProxy, setCustomProxy] = useState<string>(initialNovel?.cookieConfig?.customProxy || '');
 
   // Quick Inspection State
   const [isInspecting, setIsInspecting] = useState<boolean>(false);
@@ -122,7 +133,7 @@ export default function BackgroundCrawlerView({
   // Polling interval ref
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Poll jobs automatically every 2.5 seconds with active flag
+  // Poll jobs automatically every 2.5 seconds with active flag and load library novels
   useEffect(() => {
     let isMounted = true;
 
@@ -139,7 +150,20 @@ export default function BackgroundCrawlerView({
       }
     };
 
+    const loadNovels = async () => {
+      try {
+        const { ok, data } = await safeFetchJson<any>('/api/novels');
+        if (isMounted && ok && Array.isArray(data?.data)) {
+          setLibraryNovels(data.data);
+        }
+      } catch {
+        // ignore
+      }
+    };
+
     loadJobs();
+    loadNovels();
+
     pollingRef.current = setInterval(() => {
       loadJobs();
     }, 2500);
@@ -149,6 +173,36 @@ export default function BackgroundCrawlerView({
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
   }, []);
+
+  // Update form if initialNovel is passed
+  useEffect(() => {
+    if (initialNovel) {
+      setUrl(initialNovel.sourceUrl || '');
+      setSelectedNovelId(initialNovel.id);
+      setStartChapter((initialNovel.chaptersCount || 0) + 1);
+      setEndChapter((initialNovel.chaptersCount || 0) + 100);
+      setChapterMode('range');
+      if (initialNovel.translationGenre) {
+        setTranslationGenre(initialNovel.translationGenre);
+      }
+    }
+  }, [initialNovel]);
+
+  // Find matching novel in library for current URL (Deduplication helper)
+  const matchedLibraryNovel = React.useMemo(() => {
+    if (selectedNovelId) {
+      const direct = libraryNovels.find(n => n.id === selectedNovelId);
+      if (direct) return direct;
+    }
+    if (!url || !url.trim()) return null;
+    return libraryNovels.find(n => {
+      if (n.sourceUrl && (n.sourceUrl === url.trim() || areNovelsMatching(n, { sourceUrl: url.trim() }))) return true;
+      const keyA = getCanonicalNovelKey(n.sourceUrl);
+      const keyB = getCanonicalNovelKey(url.trim());
+      if (keyA && keyB && keyA === keyB) return true;
+      return false;
+    }) || null;
+  }, [url, selectedNovelId, libraryNovels]);
 
   const reloadJobsNow = async () => {
     try {
@@ -252,6 +306,7 @@ export default function BackgroundCrawlerView({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           url: url.trim(),
+          novelId: selectedNovelId || matchedLibraryNovel?.id || undefined,
           startChapter: startNum,
           endChapter: endNum,
           maxChapters: maxCount,
@@ -397,11 +452,80 @@ export default function BackgroundCrawlerView({
               </div>
             </div>
 
+            {/* Library Selector / Matched Novel Banner */}
+            {matchedLibraryNovel ? (
+              <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3.5 space-y-1.5 shadow-sm">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                    <span className="text-xs font-bold text-emerald-300">
+                      Đã nhận diện bộ truyện trong Thư viện
+                    </span>
+                  </div>
+                  {(selectedNovelId || onClearInitialNovel) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedNovelId('');
+                        setUrl('');
+                        setInspectedData(null);
+                        if (onClearInitialNovel) onClearInitialNovel();
+                      }}
+                      className="text-slate-400 hover:text-white rounded p-0.5 text-xs transition-colors"
+                      title="Đổi sang truyện khác"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+                <div className="text-xs font-semibold text-white pl-6">
+                  &quot;{matchedLibraryNovel.title}&quot; {matchedLibraryNovel.author ? `• Tác giả: ${matchedLibraryNovel.author}` : ''}
+                </div>
+                <p className="text-[11px] text-slate-300 pl-6 leading-relaxed">
+                  Đã có sẵn <strong className="text-amber-300">{matchedLibraryNovel.chaptersCount || 0} chương</strong> trong cơ sở dữ liệu. Tiến trình cào ngầm sẽ <strong>tự động đồng bộ và cào tiếp</strong> từ chương {(matchedLibraryNovel.chaptersCount || 0) + 1} vào bộ truyện này mà không tạo bản sao trùng lặp.
+                </p>
+              </div>
+            ) : libraryNovels.length > 0 ? (
+              <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 space-y-2">
+                <div className="flex items-center justify-between text-xs text-slate-300 font-medium">
+                  <span className="flex items-center gap-1.5 text-indigo-300">
+                    <Library className="h-3.5 w-3.5" />
+                    Cào tiếp truyện có sẵn trong Thư viện:
+                  </span>
+                  <span className="text-[11px] text-slate-400 font-normal">{libraryNovels.length} truyện</span>
+                </div>
+                <select
+                  value={selectedNovelId}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setSelectedNovelId(id);
+                    setInspectedData(null);
+                    const found = libraryNovels.find(n => n.id === id);
+                    if (found) {
+                      setUrl(found.sourceUrl || '');
+                      setStartChapter((found.chaptersCount || 0) + 1);
+                      setEndChapter((found.chaptersCount || 0) + 100);
+                      setChapterMode('range');
+                      if (found.translationGenre) setTranslationGenre(found.translationGenre);
+                    }
+                  }}
+                  className="w-full rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="">-- Bấm để chọn truyện cần cào tiếp --</option>
+                  {libraryNovels.map(n => (
+                    <option key={n.id} value={n.id}>
+                      {n.title} (Đã có {n.chaptersCount || 0} chương)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+
             {/* URL Input */}
             <div className="space-y-2">
               <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
                 <span>Liên kết truyện (URL)</span>
-                <span className="text-[11px] text-slate-400 font-normal">Hỗ trợ Novel543, 69Shuba, xBiquge...</span>
+                <span className="text-[11px] text-slate-400 font-normal">Hỗ trợ Novel543, 69Shuba, xBiquge, Hjwzw...</span>
               </label>
 
               <div className="relative">

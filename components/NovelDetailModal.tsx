@@ -7,7 +7,7 @@ import { safeFetchJson } from '@/lib/safe-json';
 import { 
   X, BookOpen, Download, Sparkles, Trash2, Edit3, 
   CheckCircle2, Clock, Save, RefreshCw, ExternalLink,
-  Search, Filter, Pencil, Plus, Globe, AlertCircle, Database
+  Search, Filter, Pencil, Plus, Globe, AlertCircle, Database, Cpu
 } from 'lucide-react';
 import EditChapterModal from './EditChapterModal';
 import CrawlSingleChapterModal from './CrawlSingleChapterModal';
@@ -19,6 +19,7 @@ interface NovelDetailModalProps {
   onReadChapter: (novel: Novel, chapterNum: number) => void;
   onTranslateNovel: (novel: Novel) => void;
   onResumeCrawl?: (novel: Novel) => void;
+  onBackgroundCrawl?: (novel: Novel) => void;
   onOpenEpub: (novel: Novel) => void;
   onDeleteNovel: (id: string) => void;
 }
@@ -30,6 +31,7 @@ export default function NovelDetailModal({
   onReadChapter,
   onTranslateNovel,
   onResumeCrawl,
+  onBackgroundCrawl,
   onOpenEpub,
   onDeleteNovel,
 }: NovelDetailModalProps) {
@@ -249,10 +251,24 @@ export default function NovelDetailModal({
                   onResumeCrawl(novel);
                 }}
                 className="flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-500/20 transition-colors"
-                title="Tiếp tục cào thêm chương mới từ nguồn"
+                title="Tiếp tục cào thêm chương mới từ nguồn (giao diện cào trực tiếp)"
               >
                 <RefreshCw className="h-3.5 w-3.5 text-amber-400" />
                 <span>Tiếp tục cào</span>
+              </button>
+            )}
+
+            {onBackgroundCrawl && (
+              <button
+                onClick={() => {
+                  onClose();
+                  onBackgroundCrawl(novel);
+                }}
+                className="flex items-center gap-1.5 rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-300 hover:bg-indigo-500/20 transition-colors"
+                title="Cào ngầm tự động trên máy chủ (đóng tab máy chủ vẫn cào và lưu vào Supabase)"
+              >
+                <Cpu className="h-3.5 w-3.5 text-indigo-400" />
+                <span>Cào ngầm</span>
               </button>
             )}
 

@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { Novel, Chapter } from '@/types/novel';
 import { cleanChapterTitle, sanitizeChapter, sanitizeChapters } from './chapter-utils';
+import { areNovelsMatching, getCanonicalNovelKey } from './crawler-engine';
 import {
   isSupabaseConfigured,
   fetchSupabaseNovels,
@@ -260,19 +261,75 @@ class ServerStorage {
     return null;
   }
 
+  /**
+   * Search for an existing novel in memory matching candidate sourceUrl, canonical key, or title
+   */
+  public findExistingNovel(candidate: {
+    id?: string;
+    sourceUrl?: string;
+    title?: string;
+    originalTitle?: string;
+  }): Novel | null {
+    if (!candidate) return null;
+    if (candidate.id && this.state.novels[candidate.id]) {
+      return this.state.novels[candidate.id];
+    }
+    const novels = Object.values(this.state.novels);
+    return novels.find(n => areNovelsMatching(n, candidate)) || null;
+  }
+
   public saveNovel(novel: Novel): Novel {
-    const existing = this.state.novels[novel.id];
-    const chaps = this.state.chapters[novel.id] || [];
+    // Check if another novel already exists matching this novel (by canonical key, source URL, or title)
+    const matchingNovel = this.findExistingNovel(novel);
+    const targetId = matchingNovel ? matchingNovel.id : novel.id;
+
+    // If a different ID was matched, redirect chapters and merge metadata
+    if (matchingNovel && matchingNovel.id !== novel.id) {
+      console.log(`[ServerStorage Deduplication] Phát hiện truyện trùng lặp "${novel.title}". Tự động gộp vào truyện đã có ID: ${targetId}`);
+      if (this.state.chapters[novel.id] && this.state.chapters[novel.id].length > 0) {
+        if (!this.state.chapters[targetId]) {
+          this.state.chapters[targetId] = [];
+        }
+        for (const orphanChap of this.state.chapters[novel.id]) {
+          orphanChap.novelId = targetId;
+          const existsIdx = this.state.chapters[targetId].findIndex(c => c.chapterNumber === orphanChap.chapterNumber);
+          if (existsIdx >= 0) {
+            this.state.chapters[targetId][existsIdx] = {
+              ...this.state.chapters[targetId][existsIdx],
+              ...orphanChap,
+            };
+          } else {
+            this.state.chapters[targetId].push(orphanChap);
+          }
+        }
+        this.state.chapters[targetId].sort((a, b) => a.chapterNumber - b.chapterNumber);
+        delete this.state.chapters[novel.id];
+      }
+      delete this.state.novels[novel.id];
+    }
+
+    const existing = this.state.novels[targetId] || matchingNovel;
+    const chaps = this.state.chapters[targetId] || [];
     const translatedCount = chaps.filter(c => c.translationStatus === 'translated').length;
 
     const updated: Novel = {
+      ...(existing || {}),
       ...novel,
+      id: targetId,
+      title: (novel.title && novel.title !== 'Truyện không tên') ? novel.title : (existing?.title || novel.title),
+      originalTitle: existing?.originalTitle || novel.originalTitle,
+      author: (novel.author && novel.author !== 'Khuyết danh') ? novel.author : (existing?.author || novel.author),
+      description: novel.description || existing?.description || '',
+      coverUrl: novel.coverUrl || existing?.coverUrl || '',
+      sourceUrl: novel.sourceUrl || existing?.sourceUrl || '',
+      sourceDomain: novel.sourceDomain || existing?.sourceDomain || '',
       chaptersCount: Math.max(novel.chaptersCount || 0, chaps.length, existing?.chaptersCount || 0),
       translatedChaptersCount: Math.max(novel.translatedChaptersCount || 0, translatedCount, existing?.translatedChaptersCount || 0),
+      createdAt: existing?.createdAt || novel.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
-    this.state.novels[novel.id] = updated;
+    this.state.novels[targetId] = updated;
     this.saveState();
     return updated;
   }
@@ -283,6 +340,46 @@ class ServerStorage {
       await saveSupabaseNovel(saved);
     }
     return saved;
+  }
+
+  /**
+   * Scan and reconcile all duplicate novels in database, merging chapters into primary novel
+   */
+  public async reconcileDuplicateNovels(): Promise<{ mergedCount: number }> {
+    const novels = Object.values(this.state.novels);
+    let mergedCount = 0;
+    const toDeleteIds: string[] = [];
+
+    for (let i = 0; i < novels.length; i++) {
+      for (let j = i + 1; j < novels.length; j++) {
+        const novelA = novels[i];
+        const novelB = novels[j];
+        if (!novelA || !novelB || novelA.id === novelB.id) continue;
+        if (toDeleteIds.includes(novelA.id) || toDeleteIds.includes(novelB.id)) continue;
+
+        if (areNovelsMatching(novelA, novelB)) {
+          console.log(`[Deduplication] Gộp 2 truyện trùng: "${novelA.title}" (${novelA.id}) và "${novelB.title}" (${novelB.id})`);
+          // novelA is primary, novelB is merged into novelA
+          const chapsB = await this.getChaptersAsync(novelB.id);
+          if (chapsB.length > 0) {
+            chapsB.forEach(c => { c.novelId = novelA.id; });
+            await this.saveChaptersAsync(chapsB, novelA);
+          }
+          toDeleteIds.push(novelB.id);
+          delete this.state.novels[novelB.id];
+          delete this.state.chapters[novelB.id];
+          if (isSupabaseConfigured()) {
+            await deleteSupabaseNovel(novelB.id);
+          }
+          mergedCount++;
+        }
+      }
+    }
+
+    if (mergedCount > 0) {
+      this.saveState();
+    }
+    return { mergedCount };
   }
 
   public deleteNovel(id: string): boolean {

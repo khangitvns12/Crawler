@@ -62,6 +62,172 @@ export function normalizeNovelUrl(rawUrl: string): string {
 }
 
 /**
+ * Extract a canonical site-scoped book identifier from a novel URL
+ * Enables 100% reliable deduplication across different page formats (info vs catalog vs chapter)
+ */
+export function getCanonicalNovelKey(rawUrl?: string): string | null {
+  if (!rawUrl || typeof rawUrl !== 'string') return null;
+  const clean = rawUrl.trim();
+  if (!clean) return null;
+
+  try {
+    const normUrl = normalizeNovelUrl(clean);
+    const parsed = new URL(normUrl);
+    const host = parsed.hostname.toLowerCase();
+    const pathname = parsed.pathname;
+
+    // hjwzw (tw.hjwzw.com/Book/1642, /Book/Chapter/1642, /Book/Read/1642,530186)
+    if (/hjwzw/i.test(host)) {
+      const m = pathname.match(/\/Book\/(?:Chapter\/|Read\/)?(\d+)/i);
+      if (m && m[1]) return `hjwzw:${m[1]}`;
+    }
+
+    // 69shuba family (/txt/12345.htm, /book/12345.htm, /txt/12345/)
+    if (/69shuba|69suba|69shu|69xinshu|69yuedu/i.test(host)) {
+      const m = pathname.match(/\/(?:txt|book)\/(\d+)/i);
+      if (m && m[1]) return `69shuba:${m[1]}`;
+    }
+
+    // novel543 family (/0312506018/, /dir/0312506018/, /book/0312506018/)
+    if (/novel543/i.test(host)) {
+      const m = pathname.match(/\/(?:dir\/|book\/)?(\d{6,12})/i);
+      if (m && m[1]) return `novel543:${m[1]}`;
+    }
+
+    // xbiquge / biquge family (/135/135260/, /book/135260/)
+    if (/xbiquge|biquge|biqubao/i.test(host)) {
+      const m = pathname.match(/(?:book\/|\d+\/)?(\d+)\/?$/i);
+      if (m && m[1]) return `biquge:${m[1]}`;
+    }
+
+    // truyenfull family (/mang-hoang-ky/)
+    if (/truyenfull/i.test(host)) {
+      const m = pathname.match(/\/([a-z0-9-]+)\/?$/i);
+      if (m && m[1]) return `truyenfull:${m[1]}`;
+    }
+
+    // syosetu (ncode.syosetu.com/n1234ab/)
+    if (/syosetu/i.test(host)) {
+      const m = pathname.match(/(n\d{4}[a-z]{1,3})/i);
+      if (m && m[1]) return `syosetu:${m[1]}`;
+    }
+
+    // kakuyomu (kakuyomu.jp/works/1234567890)
+    if (/kakuyomu/i.test(host)) {
+      const m = pathname.match(/\/works\/(\d+)/i);
+      if (m && m[1]) return `kakuyomu:${m[1]}`;
+    }
+
+    // Default canonical key based on normalized host and first path segment
+    const cleanHost = host.replace(/^www\./i, '');
+    const cleanPath = pathname.replace(/\/+$/, '').toLowerCase();
+    return `${cleanHost}:${cleanPath}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Normalize novel title for fuzzy comparison
+ */
+export function normalizeTitleForComparison(title?: string): string {
+  if (!title || typeof title !== 'string') return '';
+  return title
+    .replace(/[《》【】\[\]\(\)（）「」『』〈〉""''“”‘’]/g, '')
+    .replace(/\s*-\s*.*$/, '') // strip author or subtitle after hyphen
+    .replace(/\s*作者[:：].*$/, '')
+    .replace(/(?:最新章节|全本|全文免费阅读|精校版|TXT下载|小说|txt|无弹窗).*$/i, '')
+    .replace(/[\s\-_.,:;!?'"~`\/\\]+/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+/**
+ * Universal Novel Matching to reliably identify whether two novel records refer to the same book
+ */
+export function areNovelsMatching(
+  novelA: { sourceUrl?: string; title?: string; originalTitle?: string; id?: string },
+  novelB: { sourceUrl?: string; title?: string; originalTitle?: string; id?: string }
+): boolean {
+  if (!novelA || !novelB) return false;
+
+  // 0. Exact ID match
+  if (novelA.id && novelB.id && novelA.id === novelB.id) {
+    return true;
+  }
+
+  // 1. Canonical Key & URL Matching
+  if (novelA.sourceUrl && novelB.sourceUrl) {
+    const keyA = getCanonicalNovelKey(novelA.sourceUrl);
+    const keyB = getCanonicalNovelKey(novelB.sourceUrl);
+    if (keyA && keyB && keyA === keyB) {
+      return true;
+    }
+    if (areUrlsMatching(novelA.sourceUrl, novelB.sourceUrl)) {
+      return true;
+    }
+  }
+
+  // 2. Original CJK Title Matching
+  const origA = normalizeTitleForComparison(novelA.originalTitle);
+  const origB = normalizeTitleForComparison(novelB.originalTitle);
+  if (origA && origB && origA === origB) {
+    return true;
+  }
+
+  // 3. Title Matching against originalTitle
+  const titleA = normalizeTitleForComparison(novelA.title);
+  const titleB = normalizeTitleForComparison(novelB.title);
+  if (origA && titleB && origA === titleB) {
+    return true;
+  }
+  if (origB && titleA && origB === titleA) {
+    return true;
+  }
+
+  // 4. Cleaned Title Matching
+  if (titleA && titleB && titleA === titleB) {
+    return true;
+  }
+
+  // 5. Strong Substring Containment for titles >= 6 characters
+  if (titleA && titleB && titleA.length >= 6 && titleB.length >= 6) {
+    if (titleA.includes(titleB) || titleB.includes(titleA)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Canonical URL matching to check if two novel URLs refer to the same book
+ */
+export function areUrlsMatching(urlA?: string, urlB?: string): boolean {
+  if (!urlA || !urlB) return false;
+  const cleanA = (urlA || '').trim();
+  const cleanB = (urlB || '').trim();
+  if (cleanA === cleanB) return true;
+
+  const keyA = getCanonicalNovelKey(cleanA);
+  const keyB = getCanonicalNovelKey(cleanB);
+  if (keyA && keyB && keyA === keyB) return true;
+
+  try {
+    const nA = normalizeNovelUrl(cleanA).replace(/\/+$/, '').toLowerCase();
+    const nB = normalizeNovelUrl(cleanB).replace(/\/+$/, '').toLowerCase();
+    if (nA === nB) return true;
+    const pA = new URL(nA);
+    const pB = new URL(nB);
+    const hostA = pA.hostname.replace(/^www\./i, '');
+    const hostB = pB.hostname.replace(/^www\./i, '');
+    return hostA === hostB && pA.pathname.replace(/\/+$/, '') === pB.pathname.replace(/\/+$/, '');
+  } catch {
+    return cleanA.toLowerCase() === cleanB.toLowerCase();
+  }
+}
+
+/**
  * Get domain mirrors for anti-blocking resiliency on Cloudflare-protected sites
  */
 export function getDomainMirrors(rawUrl: string): string[] {
@@ -318,7 +484,13 @@ export async function fetchHtmlWithCookies(options: CrawlFetchOptions): Promise<
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const timeoutId = setTimeout(() => {
+      try {
+        controller.abort();
+      } catch {
+        // ignore
+      }
+    }, timeoutMs);
 
     try {
       const response = await fetch(currentUrl, {
@@ -327,8 +499,6 @@ export async function fetchHtmlWithCookies(options: CrawlFetchOptions): Promise<
         signal: controller.signal,
         redirect: 'follow',
       });
-
-      clearTimeout(timeoutId);
 
       const status = response.status;
       const responseHeaders: Record<string, string> = {};
@@ -437,11 +607,12 @@ export async function fetchHtmlWithCookies(options: CrawlFetchOptions): Promise<
         return { html, status, headers: responseHeaders, usedUrl: currentUrl };
       }
     } catch (err: unknown) {
-      clearTimeout(timeoutId);
       lastError = err instanceof Error ? err : new Error(String(err));
       if (idx < targetUrls.length - 1) {
         continue;
       }
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -1207,12 +1378,22 @@ export async function scrapeChapterContent(
   cookieConfig?: CookieConfig,
   customConfig?: CrawlerConfig
 ): Promise<ChapterContentResult> {
-  const normalizedChapterUrl = normalizeNovelUrl(chapterUrl);
-  const { html, usedUrl } = await fetchHtmlWithCookies({ url: normalizedChapterUrl, cookieConfig });
-  const activeChapterUrl = usedUrl || normalizedChapterUrl;
-  const $ = cheerio.load(html);
-  const preset = findPresetForUrl(activeChapterUrl);
-  const config = { ...preset.config, ...(customConfig || {}) };
+  const safetyTimeoutMs = 30000;
+  let timerId: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timerId = setTimeout(() => {
+      reject(new Error(`Quá thời gian 30s khi bóc tách chương: ${chapterUrl}`));
+    }, safetyTimeoutMs);
+  });
+
+  try {
+    const scrapePromise = (async (): Promise<ChapterContentResult> => {
+      const normalizedChapterUrl = normalizeNovelUrl(chapterUrl);
+      const { html, usedUrl } = await fetchHtmlWithCookies({ url: normalizedChapterUrl, cookieConfig });
+      const activeChapterUrl = usedUrl || normalizedChapterUrl;
+      const $ = cheerio.load(html);
+      const preset = findPresetForUrl(activeChapterUrl);
+      const config = { ...preset.config, ...(customConfig || {}) };
 
   // 1. Extract Chapter Title FIRST before removing any tags
   let title = '';
@@ -1344,13 +1525,21 @@ export async function scrapeChapterContent(
     }
   }
 
-  const cleanText = cleanContentHtml(contentHtml);
-  const wordCount = cleanText.split(/\s+/).filter(Boolean).length;
+      const cleanText = cleanContentHtml(contentHtml);
+      const wordCount = cleanText.split(/\s+/).filter(Boolean).length;
 
-  return {
-    title: title || 'Chương không tên',
-    content: cleanText,
-    wordCount,
-    rawHtml: contentHtml,
-  };
+      return {
+        title: title || 'Chương không tên',
+        content: cleanText,
+        wordCount,
+        rawHtml: contentHtml,
+      };
+    })();
+
+    return await Promise.race([scrapePromise, timeoutPromise]);
+  } finally {
+    if (timerId) {
+      clearTimeout(timerId);
+    }
+  }
 }
