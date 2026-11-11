@@ -24,7 +24,7 @@ async function handleSync() {
     }
 
     const result = await serverStorage.syncWithSupabase();
-    const novels = serverStorage.getAllNovels();
+    const novels = await serverStorage.getAllNovelsAsync();
 
     return NextResponse.json({
       success: result.success,

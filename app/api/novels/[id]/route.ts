@@ -8,7 +8,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const novel = serverStorage.getNovelById(id);
+    const novel = await serverStorage.getNovelByIdAsync(id);
     if (!novel) {
       return NextResponse.json({ error: 'Không tìm thấy truyện' }, { status: 404 });
     }

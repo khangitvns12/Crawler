@@ -4,7 +4,7 @@ import { serverStorage } from '@/lib/server-storage';
 export async function GET(req: NextRequest) {
   try {
     const { origin } = new URL(req.url);
-    const novels = serverStorage.getAllNovels();
+    const novels = await serverStorage.getAllNovelsAsync();
 
     const formattedNovels = novels.map(n => ({
       id: n.id,

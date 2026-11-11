@@ -10,7 +10,7 @@ export async function GET(
     const { origin, searchParams } = new URL(req.url);
     const format = searchParams.get('format') || 'translated'; // 'translated' | 'original' | 'both'
 
-    const novel = serverStorage.getNovelById(id);
+    const novel = await serverStorage.getNovelByIdAsync(id);
     if (!novel) {
       return NextResponse.json({ status: 'error', message: 'Novel not found' }, { status: 404 });
     }
@@ -35,7 +35,7 @@ export async function GET(
       content = chapter.translatedContent || chapter.rawContent || '';
     }
 
-    const allChapters = serverStorage.getChapters(id);
+    const allChapters = await serverStorage.getChaptersAsync(id);
     const hasNext = allChapters.some(c => c.chapterNumber === num + 1);
     const hasPrev = allChapters.some(c => c.chapterNumber === num - 1);
 

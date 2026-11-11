@@ -5,7 +5,7 @@ import { generateOpdsFeed } from '@/lib/opds-generator';
 export async function GET(req: NextRequest) {
   try {
     const { origin } = new URL(req.url);
-    const novels = serverStorage.getAllNovels();
+    const novels = await serverStorage.getAllNovelsAsync();
     const opdsXml = generateOpdsFeed(novels, origin);
 
     return new NextResponse(opdsXml, {

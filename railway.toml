@@ -1,0 +1,16 @@
+[build]
+# Railway will detect and use the Dockerfile automatically.
+# Set Dockerfile path explicitly in case of monorepo setups.
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "node server.js"
+healthcheckPath = "/api/supabase/status"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+[[mounts]]
+# Persistent volume for background crawler jobs and local DB cache.
+# Map this to "/app/.data" in the Railway dashboard under Settings → Volumes.
+mountPath = "/app/.data"

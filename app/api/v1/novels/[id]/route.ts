@@ -8,7 +8,7 @@ export async function GET(
   try {
     const { id } = await params;
     const { origin } = new URL(req.url);
-    const novel = serverStorage.getNovelById(id);
+    const novel = await serverStorage.getNovelByIdAsync(id);
 
     if (!novel) {
       return NextResponse.json({
@@ -17,7 +17,7 @@ export async function GET(
       }, { status: 404 });
     }
 
-    const chapters = serverStorage.getChapters(id);
+    const chapters = await serverStorage.getChaptersAsync(id);
     const formattedChapters = chapters.map(ch => ({
       chapterNumber: ch.chapterNumber,
       title: ch.translatedTitle || ch.title,

@@ -25,6 +25,9 @@ const DB_FILE = path.join(DB_DIR, 'novels-db.json');
 class ServerStorage {
   private state: StorageState = { novels: {}, chapters: {} };
   private isHydrating: boolean = false;
+  private lastNovelsRefreshTime: number = 0;
+  private isBackgroundRefreshing: boolean = false;
+  private readonly NOVELS_REFRESH_TTL_MS = 60_000; // 60 seconds stale-while-revalidate window
 
   constructor() {
     this.loadState();
@@ -156,17 +159,30 @@ class ServerStorage {
   }
 
   /**
-   * Supabase-first authoritative novels fetcher
+   * Supabase-first authoritative novels fetcher with stale-while-revalidate.
+   * Returns cached novels instantly if available, triggers background refresh from Supabase.
+   * Only blocks on Supabase fetch when cache is empty (cold start).
    */
   public async getAllNovelsAsync(): Promise<Novel[]> {
+    const cachedNovels = this.getAllNovels();
+
+    // If we have cached novels, return them immediately and refresh in background
+    if (cachedNovels.length > 0) {
+      // Trigger background refresh if TTL has elapsed
+      this.refreshNovelsInBackground();
+      return cachedNovels;
+    }
+
+    // Cold start: no cache, must block on Supabase fetch
     if (isSupabaseConfigured()) {
       try {
         const remoteNovels = await fetchSupabaseNovels();
-        if (Array.isArray(remoteNovels)) {
+        if (Array.isArray(remoteNovels) && remoteNovels.length > 0) {
           this.state.novels = {};
           remoteNovels.forEach(n => {
             this.state.novels[n.id] = n;
           });
+          this.lastNovelsRefreshTime = Date.now();
           this.saveState();
           return remoteNovels;
         }
@@ -174,7 +190,48 @@ class ServerStorage {
         console.warn('getAllNovelsAsync Supabase note:', err);
       }
     }
-    return this.getAllNovels();
+
+    return cachedNovels;
+  }
+
+  /**
+   * Background refresh of novels from Supabase (non-blocking, fire-and-forget).
+   * Uses a TTL to avoid hammering Supabase on every request.
+   */
+  private refreshNovelsInBackground(): void {
+    if (!isSupabaseConfigured() || this.isBackgroundRefreshing) return;
+
+    const now = Date.now();
+    if (now - this.lastNovelsRefreshTime < this.NOVELS_REFRESH_TTL_MS) return;
+
+    this.isBackgroundRefreshing = true;
+    this.lastNovelsRefreshTime = now;
+
+    // Fire-and-forget: do NOT await this
+    fetchSupabaseNovels()
+      .then(remoteNovels => {
+        if (Array.isArray(remoteNovels) && remoteNovels.length >= 0) {
+          // Preserve any locally-cached novels not in Supabase (e.g. just created)
+          const remoteIds = new Set(remoteNovels.map(n => n.id));
+          Object.keys(this.state.novels).forEach(id => {
+            if (!remoteIds.has(id) && !id.startsWith('__system_')) {
+              // Keep locally-only novels for one cycle, but they may be pruned later
+              remoteNovels.push(this.state.novels[id]);
+            }
+          });
+          this.state.novels = {};
+          remoteNovels.forEach(n => {
+            this.state.novels[n.id] = n;
+          });
+          this.saveState();
+        }
+      })
+      .catch(err => {
+        console.warn('refreshNovelsInBackground note:', err);
+      })
+      .finally(() => {
+        this.isBackgroundRefreshing = false;
+      });
   }
 
   public getNovel(id: string): Novel | null {
@@ -188,8 +245,16 @@ class ServerStorage {
   public async getNovelByIdAsync(id: string): Promise<Novel | null> {
     const existing = this.getNovel(id);
     if (existing) return existing;
+
+    // Cache miss: hydrate from Supabase, then try again
     if (isSupabaseConfigured()) {
-      await this.getAllNovelsAsync();
+      // Only do a full hydrate if we have no novels cached at all (cold start)
+      if (Object.keys(this.state.novels).length === 0) {
+        await this.getAllNovelsAsync();
+      } else {
+        // We have some novels but not this one — try background refresh
+        this.refreshNovelsInBackground();
+      }
       return this.getNovel(id);
     }
     return null;
@@ -204,10 +269,18 @@ class ServerStorage {
     let list = this.getChapters(novelId);
     const expectedCount = this.state.novels[novelId]?.chaptersCount || 0;
 
+    // Return cached chapters immediately if we have any and counts match (or expected count is unknown)
     if (!forceRefresh && list.length > 0 && (expectedCount === 0 || list.length >= expectedCount)) {
       return sanitizeChapters(list);
     }
 
+    // If we have cached chapters but count doesn't match, return what we have and refresh in background
+    if (!forceRefresh && list.length > 0) {
+      this.refreshChaptersInBackground(novelId);
+      return sanitizeChapters(list);
+    }
+
+    // No cached chapters at all: must block on Supabase fetch
     if (isSupabaseConfigured()) {
       try {
         const remote = await fetchSupabaseChapters(novelId);
@@ -225,6 +298,28 @@ class ServerStorage {
     }
 
     return list;
+  }
+
+  /**
+   * Background refresh of chapters from Supabase (non-blocking).
+   */
+  private refreshChaptersInBackground(novelId: string): void {
+    if (!isSupabaseConfigured()) return;
+
+    // Fire-and-forget: do NOT await this
+    fetchSupabaseChapters(novelId)
+      .then(remote => {
+        if (remote && remote.length > 0) {
+          this.state.chapters[novelId] = remote;
+          if (this.state.novels[novelId] && remote.length > (this.state.novels[novelId].chaptersCount || 0)) {
+            this.state.novels[novelId].chaptersCount = remote.length;
+          }
+          this.saveState();
+        }
+      })
+      .catch(err => {
+        console.warn('refreshChaptersInBackground note:', err);
+      });
   }
 
   public getChapter(novelId: string, chapterNumber: number): Chapter | null {

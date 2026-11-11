@@ -8,14 +8,14 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const novel = serverStorage.getNovelById(id);
+    const novel = await serverStorage.getNovelByIdAsync(id);
     if (!novel) {
       return NextResponse.json({ status: 'error', message: 'Novel not found' }, { status: 404 });
     }
 
     const { searchParams } = new URL(req.url);
     const contentType = (searchParams.get('type') || 'translated') as 'translated' | 'original' | 'both';
-    const chapters = serverStorage.getChapters(id);
+    const chapters = await serverStorage.getChaptersAsync(id);
 
     const epubBlob = await generateEpub({
       novel,
