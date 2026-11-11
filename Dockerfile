@@ -39,8 +39,8 @@ COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public 2>/dev/null || true
 
 # Persistent data directory for background jobs & local DB cache
+# Railway manages the volume via dashboard (Settings → Volumes → /app/.data)
 RUN mkdir -p /app/.data && chown -R nextjs:nodejs /app/.data
-VOLUME ["/app/.data"]
 
 USER nextjs
 
