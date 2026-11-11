@@ -14,6 +14,9 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# Ensure public directory exists (Next.js doesn't require it but COPY needs it)
+RUN mkdir -p public
+
 # next.config.ts already sets output: 'standalone' – no extra env needed
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -36,7 +39,7 @@ RUN addgroup --system --gid 1001 nodejs && \
 # Copy standalone server output
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public 2>/dev/null || true
+COPY --from=builder /app/public ./public
 
 # Persistent data directory for background jobs & local DB cache
 # Railway manages the volume via dashboard (Settings → Volumes → /app/.data)
